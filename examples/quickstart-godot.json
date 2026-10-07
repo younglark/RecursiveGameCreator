@@ -1,0 +1,36 @@
+{
+  "engine": "godot",
+  "brief": "Create a small playable GODOT game with a clear goal, feedback and restart.",
+  "backend": "harbor",
+  "model": "gpt-6-astra",
+  "rounds": 1,
+  "max_actions": null,
+  "harbor": "harbor",
+  "godot": "godot",
+  "blender": "blender",
+  "player": {
+    "mode": "policy",
+    "trajectories_per_version": 3,
+    "parallel_episodes": 1
+  },
+  "assets": {
+    "env_file": "../.env.hunyuan",
+    "max_images": 0,
+    "max_models": 0,
+    "max_blender": 0
+  },
+  "runtime": {
+    "mode": "docker",
+    "image": "rsi-gamecreator/runtime:full-v1",
+    "health_timeout_seconds": 30,
+    "render_threads": 4,
+    "build_network": "none",
+    "max_game_instances": 1
+  },
+  "execution": {
+    "parallel_reviews": 2
+  },
+  "storage": {
+    "keep_workspaces": false
+  }
+}

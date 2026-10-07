@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use Recursive Game Creator, please cite the associated paper."
+title: "Recursive Game Creator: An Agentic Product-Level Experience-Oriented Game Harness"
+type: software
+license: MIT
+authors:
+  - family-names: Chen
+    given-names: Jiajun
+  - family-names: Wu
+    given-names: Haoyu
+  - family-names: Jia
+    given-names: Mingda
+  - family-names: Liu
+    given-names: Xihui
+url: "https://imbaldy.github.io/recursive-game-creator/"
+repository-code: "https://github.com/IMBALDY/RecursiveGameCreator"
+references:
+  - type: article
+    title: "Recursive Game Creator: An Agentic Product-Level Experience-Oriented Game Harness"
+    authors:
+      - family-names: Chen
+        given-names: Jiajun
+      - family-names: Wu
+        given-names: Haoyu
+      - family-names: Jia
+        given-names: Mingda
+      - family-names: Liu
+        given-names: Xihui
+    year: 2026
+    url: "https://arxiv.org/abs/2610.08621"

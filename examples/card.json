@@ -1,0 +1,19 @@
+{
+  "engine": "html",
+  "brief": "制作一个好玩的中文卡牌游戏，并根据试玩持续改进。",
+  "backend": "harbor",
+  "model": "gpt-6-astra",
+  "reasoning": "high",
+  "rounds": null,
+  "entry": "index.html",
+  "harbor": "harbor",
+  "max_actions": null,
+  "assets": {
+    "env_file": "../.env.hunyuan",
+    "image_model": "hy-image-v3",
+    "model_3d": "hy-3d-3.1",
+    "max_images": null,
+    "max_models": null,
+    "max_blender": null
+  }
+}

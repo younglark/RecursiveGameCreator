@@ -1,0 +1,23 @@
+{
+  "cjj": [
+    "cardgame-autobattler", "horror-dollhouse", "idle-ant-empire",
+    "openworld-airship-trader", "platformer-ivory-beats", "puzzle-circuit-wizard",
+    "racing-drift-circuit", "rhythm-beat-dungeon", "roguelike-action-void-harvest",
+    "shooter-hotline-heist", "simulation-air-control", "sports-archery-quest",
+    "strategy-chess-variant", "tycoon-pirate-port", "visualnovel-arcaneacademy"
+  ],
+  "why": [
+    "cardgame-poker-roguelike", "horror-floor-13", "idle-dungeon-guild",
+    "openworld-bounty", "platformer-momentum-lab", "puzzle-pipe-crisis",
+    "racing-rocket-trials", "rhythm-garden", "roguelike-breach-tactics",
+    "shooter-void-patrol", "simulation-border-check", "sports-boxing-gym",
+    "strategy-spell-tactics", "tycoon-space-colony", "visualnovel-detective-noir"
+  ],
+  "jmd": [
+    "cardgame-spire-descent", "horror-lighthouse", "idle-factory-planet",
+    "openworld-sky-islands", "platformer-thunder-valkyrie", "puzzle-sokoban-dungeon",
+    "racing-trick-runner", "rhythm-note-highway", "roguelike-dungeon-shop",
+    "shooter-wave-commander", "simulation-kitchen-rush", "sports-skateboard-park",
+    "strategy-towerdefense", "tycoon-wildhaven", "visualnovel-time-paradox"
+  ]
+}

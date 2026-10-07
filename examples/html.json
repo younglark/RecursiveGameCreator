@@ -1,0 +1,18 @@
+{
+  "engine": "html",
+  "brief": "制作一款有明确目标、选择与反馈的 HTML 游戏；每轮围绕一个可检验的乐趣假设改进。",
+  "backend": "harbor",
+  "model": "gpt-6-astra",
+  "rounds": null,
+  "max_actions": null,
+  "entry": "index.html",
+  "harbor": "harbor",
+  "assets": {
+    "env_file": "../.env.hunyuan",
+    "image_model": "hy-image-v3",
+    "model_3d": "hy-3d-3.1",
+    "max_images": null,
+    "max_models": null,
+    "max_blender": null
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "engine": "godot",
+  "brief": "用 Godot 和 Blender 制作一个好玩的 3D 赛车游戏，并根据试玩改进玩法和美术。",
+  "backend": "harbor",
+  "model": "gpt-6-astra",
+  "reasoning": "high",
+  "rounds": null,
+  "max_actions": null,
+  "harbor": "harbor",
+  "godot": "godot",
+  "blender": "blender",
+  "assets": {
+    "env_file": "../.env.hunyuan",
+    "max_images": null,
+    "max_models": null,
+    "max_blender": null
+  }
+}

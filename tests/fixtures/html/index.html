@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bridge fixture (not an evolved game)</title>
+<canvas width="400" height="200"></canvas>
+<script src="game_agent_bridge.js"></script>
+<script>
+let x = 20;
+const ctx = document.querySelector('canvas').getContext('2d');
+function draw() { ctx.clearRect(0, 0, 400, 200); ctx.fillRect(x, 90, 20, 20); }
+document.addEventListener('keydown', e => { if (e.key === 'ArrowRight') x += 10; draw(); });
+GameAgentBridge.register({ reset() { x = 20; draw(); }, observe() { return { x }; } });
+draw();
+</script>

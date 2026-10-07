@@ -1,0 +1,7 @@
+{
+  "engine": "html",
+  "brief": "Offline controller fixture; does not generate or play a real game.",
+  "backend": "mock",
+  "rounds": 2,
+  "assets": {"max_images": 0, "max_models": 0, "max_blender": 0}
+}

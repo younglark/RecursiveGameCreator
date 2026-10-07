@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.26,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "game-agent-lite"
+version = "0.1.0"
+description = "Experience-oriented game refinement with portable artifacts and isolated gameplay"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["jsonschema>=4.23,<5", "playwright>=1.49,<2"]
+
+[project.urls]
+Homepage = "https://imbaldy.github.io/recursive-game-creator/"
+Repository = "https://github.com/IMBALDY/RecursiveGameCreator"
+Issues = "https://github.com/IMBALDY/RecursiveGameCreator/issues"
+Paper = "https://arxiv.org/abs/2610.08621"
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+game-agent = "game_agent_lite.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/game_agent_lite"]
+
+[tool.hatch.build]
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/.DS_Store", "**/*.local.json"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src", "/tests", "/examples", "/docker", "/scripts", "/docs",
+  "/README.md", "/LICENSE", "/VALIDATION.md", "/CITATION.cff", "/CONTRIBUTING.md", "/RELEASE_CHECKLIST.md", "/pyproject.toml",
+  "/uv.lock", "/.gitignore", "/.github",
+]
+
+[tool.hatch.build.targets.sdist.force-include]
+".env.hunyuan.example" = ".env.hunyuan.example"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

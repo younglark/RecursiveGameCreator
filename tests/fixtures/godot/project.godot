@@ -1,0 +1,11 @@
+config_version=5
+
+[application]
+config/name="Bridge fixture"
+run/main_scene="res://main.tscn"
+
+[autoload]
+GameAgentBridge="*res://game_agent_bridge.gd"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"

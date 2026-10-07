@@ -1,0 +1,17 @@
+{
+  "engine": "godot",
+  "brief": "制作一款 Godot 3D 游戏，使用 Blender 与生成资产；先形成可玩的核心循环，再改进玩法和美术。",
+  "backend": "harbor",
+  "model": "gpt-6-astra",
+  "rounds": null,
+  "max_actions": null,
+  "harbor": "harbor",
+  "godot": "godot",
+  "blender": "blender",
+  "assets": {
+    "env_file": "../.env.hunyuan",
+    "max_images": null,
+    "max_models": null,
+    "max_blender": null
+  }
+}
