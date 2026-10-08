@@ -35,11 +35,9 @@ from game_agent_lite.types import CONFIG_SCHEMA, validate
 from game_agent_lite.usage import saved_reference
 
 ROUNDS = 3
-FORMAT = "gamecraft-batch-v1"
+FORMAT = "gamecraft-batch-v2"
 ROOT = Path(__file__).resolve().parents[1]
 BENCH_COMMIT = "a43347534374df9a0c1a6c001aa9380862783f6d"
-MEMBERS = ("cjj", "why", "jmd")
-ASSIGNMENT = ROOT / "examples/gamecraft-45-assignment.json"
 EVAL_IMAGE = "rsi-gamecreator/gamecraft-eval:godot-4.6.2-v1"
 TASK_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 ENVIRONMENT = (
@@ -73,14 +71,13 @@ def code_identity():
                                     for n in sorted(set(names))})}
 
 
-def assignments(bench):
-    groups = read_json(ASSIGNMENT)
-    names = [name for group in groups.values() for name in group]
-    if (set(groups) != set(MEMBERS) or any(len(g) != 15 for g in groups.values())
-            or len(set(names)) != 45):
-        raise ValueError("Fixed assignment must contain 15 distinct tasks per member, 45 total")
-    discover(bench, names)
-    return groups
+def read_task_file(path):
+    names = read_json(path)
+    if (not isinstance(names, list) or not names
+            or any(not isinstance(name, str) for name in names)
+            or len(set(names)) != len(names)):
+        raise ValueError("Task file must contain a nonempty JSON list of distinct task IDs")
+    return names
 
 
 def relative_config(config, directory):
@@ -123,7 +120,7 @@ def discover(bench, selected=()):
 
 
 def prepare(bench, template, batch, *, env_file=None, selected=(), mock=False,
-            worker=None, score=False, judge_env_file=None, judge_max_tokens=4096):
+            task_file=None, score=False, judge_env_file=None, judge_max_tokens=4096):
     bench, batch = bench.resolve(), batch.resolve()
     scoring = None
     if score:
@@ -132,26 +129,17 @@ def prepare(bench, template, batch, *, env_file=None, selected=(), mock=False,
         judge_env_file = (judge_env_file or ROOT / ".env.gamecraft").resolve()
         scoring = {"evidence_source": "player_recording", "judge_max_tokens": judge_max_tokens,
                    "env_file": os.path.relpath(judge_env_file, batch), "judge": judge_profile(judge_env_file)}
-    shared = None
-    if worker is not None:
-        if worker not in MEMBERS or selected:
-            raise ValueError("Choose one --worker or --task, not both")
-        groups = assignments(bench)
-        selected = groups[worker]
+    protocol = None
+    if task_file is not None:
+        if selected:
+            raise ValueError("Choose one --task-file or --task, not both")
+        selected = read_task_file(task_file)
         if not mock and (git(bench, "rev-parse", "HEAD") != BENCH_COMMIT or
                          git(bench, "status", "--porcelain", "--untracked-files=no")):
-            raise ValueError(f"Team batches require clean GameCraft commit {BENCH_COMMIT}")
-        shared = {"members": groups, "benchmark_commit": BENCH_COMMIT,
-                  "code": code_identity(), "template_sha256": file_hash(template), "rounds": ROUNDS,
-                  "model": "gpt-6-astra", "reasoning": "high", "episodes": 3,
-                  "parallel_episodes": 1, "render_threads": 4, "evidence_source": "player_recording",
-                  "score": score, "judge_max_tokens": judge_max_tokens if score else None,
-                  "instruction_sha256": {name: file_hash(path) for name, path in
-                      discover(bench, [n for group in groups.values() for n in group]).items()}}
-        shared["judge"] = scoring["judge"] if score else None
+            raise ValueError(f"Task-file batches require clean GameCraft commit {BENCH_COMMIT}")
     tasks = discover(bench, selected)
-    if worker:
-        tasks = {name: tasks[name] for name in selected}  # Preserve the supplied team order.
+    if task_file is not None:
+        tasks = {name: tasks[name] for name in selected}
     config = load_config(template)
     if config["engine"] != "godot" or config["source"] is not None:
         raise ValueError("GameCraft requires a Godot template without a seed project")
@@ -159,10 +147,6 @@ def prepare(bench, template, batch, *, env_file=None, selected=(), mock=False,
         config["assets"]["env_file"] = str(env_file.expanduser().resolve())
     config["rounds"] = ROUNDS
     config["player"]["mode"] = "policy"
-    if worker:
-        config.update(model="gpt-6-astra", reasoning="high")
-        config["player"].update(trajectories_per_version=3, parallel_episodes=1)
-        config["runtime"]["render_threads"] = 4
     if mock:
         config["backend"] = "mock"
     if config["backend"] == "mock":
@@ -173,10 +157,18 @@ def prepare(bench, template, batch, *, env_file=None, selected=(), mock=False,
         config["assets"].update(max_images=0, max_models=0, max_blender=0)
     elif config["runtime"]["mode"] != "docker":
         raise ValueError("Use a Docker Godot template for live batches")
+    if task_file is not None:
+        protocol = {"task_ids": selected, "benchmark_commit": BENCH_COMMIT,
+                    "code": code_identity(), "template_sha256": file_hash(template), "rounds": ROUNDS,
+                    "model": config["model"], "reasoning": config["reasoning"],
+                    "player": config["player"], "evidence_source": "player_recording",
+                    "score": score, "judge_max_tokens": judge_max_tokens if score else None,
+                    "judge": scoring["judge"] if score else None,
+                    "instruction_sha256": {name: file_hash(path) for name, path in tasks.items()}}
     prepared = []
     for name, path in tasks.items():
         instruction = path.read_bytes()
-        native = worker is not None or score or (config.get("benchmark") or {}).get("evidence_source") == "player_recording"
+        native = task_file is not None or score or (config.get("benchmark") or {}).get("evidence_source") == "player_recording"
         environment = ENVIRONMENT
         if native:
             environment = environment.replace("the framework exports actual inputs and runs official offline replay",
@@ -188,7 +180,7 @@ def prepare(bench, template, batch, *, env_file=None, selected=(), mock=False,
                 cfg["benchmark"].update(evidence_source="player_recording", image=EVAL_IMAGE)
         elif config["backend"] == "mock":
             cfg["benchmark"] = None
-        if worker:
+        if task_file is not None:
             cfg = relative_config(cfg, batch / "configs")
         validate(cfg, CONFIG_SCHEMA)
         prepared.append((name, instruction, cfg))
@@ -196,10 +188,10 @@ def prepare(bench, template, batch, *, env_file=None, selected=(), mock=False,
     manifest = {"format": FORMAT, "rounds": ROUNDS, "created_at": time.time(),
                 "benchmark": str(bench), "template": str(template.resolve()),
                 "mode": "mock" if config["backend"] == "mock" else "live", "tasks": []}
-    if worker:
-        manifest.update(worker=worker, assignment_sha256=digest(shared),
+    if protocol is not None:
+        manifest.update(protocol_sha256=digest(protocol),
                         benchmark=os.path.relpath(bench, batch), template=os.path.relpath(template.resolve(), batch))
-        atomic_json(batch / "assignment.json", shared)
+        atomic_json(batch / "protocol.json", protocol)
     if score:
         manifest["scoring"] = scoring
     for name, instruction, cfg in prepared:
@@ -224,15 +216,14 @@ def load_manifest(batch):
     if (not names or len(set(names)) != len(names)
             or any(not TASK_ID.fullmatch(n) or n == "example" for n in names)):
         raise ValueError("Invalid task inventory")
-    if manifest.get("worker"):
-        shared = read_json(batch / "assignment.json")
-        if (digest(shared) != manifest.get("assignment_sha256") or
-                names != shared["members"][manifest["worker"]]):
-            raise ValueError("Frozen team assignment changed")
+    if manifest.get("protocol_sha256"):
+        protocol = read_json(batch / "protocol.json")
+        if (digest(protocol) != manifest["protocol_sha256"] or names != protocol["task_ids"]):
+            raise ValueError("Frozen task protocol changed")
         scoring = manifest.get("scoring")
-        if (bool(scoring) != shared["score"] or (scoring and
-                (scoring["judge_max_tokens"] != shared["judge_max_tokens"] or scoring["judge"] != shared["judge"]))):
-            raise ValueError("Frozen team scoring settings changed")
+        if (bool(scoring) != protocol["score"] or (scoring and
+                (scoring["judge_max_tokens"] != protocol["judge_max_tokens"] or scoring["judge"] != protocol["judge"]))):
+            raise ValueError("Frozen scoring settings changed")
     return manifest
 
 
@@ -300,7 +291,7 @@ def round_result(batch, manifest, task, number, generation_status):
     """Index the candidate of this round, including rejected or unscorable rounds."""
     _, run, _ = paths(batch, task)
     directory = run / f"rounds/{number:04d}"
-    row = {"task": task["id"], "worker": manifest.get("worker"), "round": number,
+    row = {"task": task["id"], "round": number,
            "generation_status": generation_status, "status": "pending", "source_version": None,
            "promoted": None, "project": None, "player_report": None, "recordings": None,
            "manifest_sha256": None, "evaluation": None, "recording_score": None,
@@ -439,10 +430,10 @@ def score_task(batch, manifest, task, cancelled=lambda: False, *, on_progress=No
 
 
 def check_environment(batch, manifest):
-    """Preflight only for the new team/scoring mode; legacy batches stay compatible."""
-    if manifest.get("worker"):
-        shared = read_json(batch / "assignment.json")
-        if code_identity()["files_sha256"] != shared["code"]["files_sha256"]:
+    """Verify frozen code, benchmark, judge settings and runtime images."""
+    if manifest.get("protocol_sha256"):
+        protocol = read_json(batch / "protocol.json")
+        if code_identity()["files_sha256"] != protocol["code"]["files_sha256"]:
             raise ValueError("Framework code changed since prepare; restore it or use a new batch")
         if manifest["mode"] != "mock":
             bench = (batch / manifest["benchmark"]).resolve()
@@ -452,7 +443,7 @@ def check_environment(batch, manifest):
         scoring = manifest["scoring"]
         if judge_profile((batch / scoring["env_file"]).resolve()) != scoring["judge"]:
             raise ValueError("Judge settings changed since prepare; API key rotation alone is allowed")
-    if manifest["mode"] == "mock" or not (manifest.get("worker") or manifest.get("scoring")):
+    if manifest["mode"] == "mock" or not (manifest.get("protocol_sha256") or manifest.get("scoring")):
         return
     images = {}
     for task in manifest["tasks"]:
@@ -478,18 +469,17 @@ def refresh(batch, manifest, *, persist=False, stopped=False):
                          else "completed" if counts.get("completed") == len(rows) else "incomplete",
                "updated_at": time.time(), "counts": counts, "tasks": rows}
     results = None
-    if manifest.get("worker") or manifest.get("scoring"):
+    if manifest.get("protocol_sha256") or manifest.get("scoring"):
         results = [round_result(batch, manifest, task, n, row["status"])
                    for task, row in zip(manifest["tasks"], rows) for n in range(ROUNDS)]
         summary["round_counts"] = dict(Counter(row["status"] for row in results))
-        summary["worker"] = manifest.get("worker")
-        summary["assignment_sha256"] = manifest.get("assignment_sha256")
+        summary["protocol_sha256"] = manifest.get("protocol_sha256")
         if manifest.get("scoring") and any(row["status"] != "scored" for row in results) and summary["status"] == "completed":
             summary["status"] = "incomplete"
     if persist:
         atomic_json(batch / "summary.json", summary)
         if results is not None:
-            atomic_json(batch / "results.json", {"assignment_sha256": manifest.get("assignment_sha256"),
+            atomic_json(batch / "results.json", {"protocol_sha256": manifest.get("protocol_sha256"),
                                                 "expected_rounds": len(results), "rounds": results})
             temp = batch / "results.csv.tmp"
             with temp.open("w", newline="") as stream:
@@ -685,8 +675,9 @@ def parser():
     prepare_cmd.add_argument("--config", type=Path, default=Path("examples/godot-docker.json"))
     prepare_cmd.add_argument("--batch-dir", type=Path, help="Default: runs/gamecraft/batch-<unique-id>")
     prepare_cmd.add_argument("--env-file", type=Path)
-    prepare_cmd.add_argument("--task", action="append", default=[])
-    prepare_cmd.add_argument("--worker", choices=MEMBERS, help="Fixed 45-task assignment; 15 tasks per member")
+    selection = prepare_cmd.add_mutually_exclusive_group()
+    selection.add_argument("--task", action="append", default=[])
+    selection.add_argument("--task-file", type=Path, help="JSON list of task IDs, in execution order")
     prepare_cmd.add_argument("--score", action="store_true", help="After each game's 3 rounds, score every candidate's saved Player recordings")
     prepare_cmd.add_argument("--judge-env-file", type=Path, default=ROOT / ".env.gamecraft")
     prepare_cmd.add_argument("--judge-max-tokens", type=int, default=4096, help="Batch OpenAI judge budget, frozen at prepare (default: 4096)")
@@ -711,15 +702,14 @@ def main(argv=None):
     try:
         if args.command == "prepare":
             args.batch_dir = args.batch_dir or Path.cwd() / "runs" / "gamecraft" / (
-                f"gamecraft45-{args.worker}-3rounds" if args.worker else
                 f"batch-{datetime.now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}")
             manifest = prepare(args.bench, args.config, args.batch_dir, env_file=args.env_file,
-                               selected=args.task, mock=args.mock, worker=args.worker, score=args.score,
+                               selected=args.task, mock=args.mock, task_file=args.task_file, score=args.score,
                                judge_env_file=args.judge_env_file, judge_max_tokens=args.judge_max_tokens)
             print(f"Prepared {len(manifest['tasks'])} tasks, exactly 3 rounds each; no rollout started.")
             print(f"Batch directory: {args.batch_dir.resolve()}")
-            if args.worker:
-                print(f"Assignment SHA256: {manifest['assignment_sha256']}")
+            if args.task_file:
+                print(f"Protocol SHA256: {manifest['protocol_sha256']}")
             return 0
         batch = args.batch_dir.resolve()
         if args.command == "run":

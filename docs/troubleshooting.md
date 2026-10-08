@@ -47,4 +47,4 @@ Harbor 适配基于 0.13.0。如果升级后失败，先确认版本，再查看
 
 ## 平台与测试边界
 
-核心使用 POSIX 文件锁和进程组，暂不支持原生 Windows。macOS 优先验证；Linux 的离线测试成功不等于桌面 Godot 试玩已验证。测试中缺失外部 Godot、FFmpeg 或可选 Harbor 检查时会跳过相应项，见 [验证记录](../VALIDATION.md)。
+核心使用 POSIX 文件锁和进程组，暂不支持原生 Windows。macOS 优先验证；Linux 的离线测试成功不等于桌面 Godot 试玩已验证。测试中缺失外部 Godot、FFmpeg 或可选 Harbor 检查时会跳过相应项，见 [测试指南](testing.md)。

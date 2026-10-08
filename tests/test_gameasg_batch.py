@@ -112,17 +112,15 @@ def contents(root):
     return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
-def test_assignment_is_frozen_disjoint_and_complete(workspace):
+def test_all_tasks_are_frozen_complete_and_portable(workspace):
     root, bench, template = workspace
-    assignment = batch.assignments(bench)
-    assert [len(assignment[w]) for w in batch.MEMBERS] == [16, 16, 15]
-    assert len({name for names in assignment.values() for name in names}) == 47
-    hashes = []
-    for worker in batch.MEMBERS:
-        path, manifest = batch.prepare(bench, template, worker=worker, exp_id=worker)
-        hashes.append(manifest["assignment_sha256"])
-        assert [t["id"] for t in manifest["tasks"]] == assignment[worker]
-        task = manifest["tasks"][0]
+    names = batch.discover(bench)
+    assert len(names) == len(set(names)) == 47
+    path, manifest = batch.prepare(bench, template, all_tasks=True, exp_id="all-tasks")
+    assert [t["id"] for t in manifest["tasks"]] == names
+    assert manifest["task_ids"] == names
+    assert manifest["protocol_sha256"]
+    for task in manifest["tasks"]:
         cfg = read_json(path / task["id"] / "config.local.json")
         assert cfg["rounds"] == 1 and cfg["reasoning"] == "high" and cfg["benchmark"] is None
         assert cfg["player"]["parallel_episodes"] == 1
@@ -132,7 +130,6 @@ def test_assignment_is_frozen_disjoint_and_complete(workspace):
         assert "DO_NOT_READ" not in json.dumps(cfg)
         for file in batch.DOCS:
             assert (path / task["id"] / "task-docs" / file).read_bytes() == (bench / "task" / task["id"] / file).read_bytes()
-    assert len(set(hashes)) == 1
     assert not (root / "runs").exists()
 
 
@@ -153,6 +150,13 @@ def test_prepare_and_run_dry_run_are_read_only(workspace):
 def test_invalid_selection_rejected(workspace, tasks):
     with pytest.raises(ValueError):
         prepare(workspace, tasks=tasks)
+
+
+def test_all_tasks_and_individual_tasks_are_mutually_exclusive(workspace):
+    before = contents(workspace[0])
+    with pytest.raises(ValueError, match="--all-tasks"):
+        prepare(workspace, all_tasks=True)
+    assert contents(workspace[0]) == before
 
 
 def test_existing_batch_is_not_overwritten(workspace):
@@ -334,10 +338,11 @@ def test_status_does_not_rewrite_evidence_or_usage(workspace, monkeypatch):
     assert contents(workspace[0]) == before
 
 
-def test_old_pilot_is_not_required(workspace):
-    assert not (workspace[0] / "validation/run_gameasg_pilot.py").exists()
-    assert batch.main(["prepare", "--worker", "jmd", "--bench", str(workspace[1]),
+def test_all_tasks_cli_dry_run_is_read_only(workspace):
+    before = contents(workspace[0])
+    assert batch.main(["prepare", "--all-tasks", "--bench", str(workspace[1]),
                        "--config", str(workspace[2]), "--dry-run"]) == 0
+    assert contents(workspace[0]) == before
 
 
 def test_launcher_streams_and_child_inherits_task_lease(tmp_path):

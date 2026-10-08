@@ -14,7 +14,7 @@
 
 ## 1. 准备环境
 
-在 RSI-GameCreator 根目录执行。先按 README 在 `.venv` 中安装本仓库及 Python 依赖；实际重放还需要已启动 Docker Desktop。
+在仓库根目录执行。先按 README 在 `.venv` 中安装本仓库及 Python 依赖；实际重放还需要已启动 Docker Desktop。
 如果已有本地 GameCraft 仓库，可直接通过 `--benchmark` 指定，不必重复克隆。
 
 ```bash
@@ -107,30 +107,6 @@ GAMECRAFT_BENCH_JUDGE_OPENAI_API_KEY=填写你的裁判API密钥
 `.env.gamecraft` 已被 `.gitignore` 排除，不进入镜像、游戏副本或运行元数据。
 也可使用上游支持的 `claude`、`opus`、`kimi`、`gemini` 后端及对应裁判密钥。
 
-### Evolvent 的 GPT-5.5
-
-Evolvent 使用 OpenAI 兼容协议，仍选择 `openai` 裁判，并显式覆盖接口地址：
-
-```dotenv
-GAMECRAFT_BENCH_JUDGE=openai
-GAMECRAFT_BENCH_JUDGE_MODEL=gpt-5.5
-GAMECRAFT_BENCH_JUDGE_OPENAI_BASE_URL=https://llmapi.evolventapi.com/v1
-GAMECRAFT_BENCH_JUDGE_OPENAI_API_KEY=填写你的Evolvent密钥
-```
-
-`BASE_URL` 使用 `/v1`，不要附加 `/chat/completions`。密钥应填写在本地
-`.env.gamecraft`，不要写入模板、命令行参数或游戏项目。
-如果已经在兄弟目录的 `.env.agent` 中保存了 `VN_AGENT_API_KEY`，可私下复制该值；
-评分脚本不会自动扫描或读取其他项目的凭据文件。
-
-本机已于 2026-09-19 将这份配置接入 `.env.gamecraft`，使用 HTTPS，并设置文件权限为
-`0600`。在评分容器中，原版 `OpenAIJudge` 使用两张已有赛车截图、两条连接测试要求
-成功返回了分数和理由，原版 JSON 解析器通过。此测试验证了认证、图片输入、
-`max_tokens=2048` 和响应解析的兼容性，**不构成完整任务评分**。
-它没有运行九条正式演示的全部评分，也不能保证后续服务额度和可用性。
-接入只修改本地凭据配置；没有修改官方裁判、rubric、生成 Agent 或游戏代码。
-报告实验结果时，应注明调用渠道为 Evolvent、请求模型名为 `gpt-5.5`。
-
 ## 4. 正式评分
 
 ```bash
@@ -176,11 +152,3 @@ GAMECRAFT_BENCH_JUDGE_OPENAI_API_KEY=填写你的Evolvent密钥
 对比 Round 0、1、2 时，分别指定各轮 sealed integrate 项目和独立输出目录，保持相同
 benchmark、镜像和裁判设置。演示覆盖范围也会影响得分，应随结果报告演示数量。
 不要把评测 rubric 或评分明细传回后续生成 Agent，以免污染 benchmark 测试。
-
-## 本地验证记录（2026-09-19）
-
-在 Apple Silicon / Docker Linux ARM64 上，Godot `4.6.2.stable.official.71f334935`
-完成 APEX Round 2 的全部 **9 条**演示回放，生成 **9 段 854×480 / 30 FPS 录像**和
-**343 张采样截图**。导入、官方构建检查、回放与 stub 评分文件输出通过，无回放错误；
-三个原始版本的内容哈希均未变化。另检查了 dry-run、只读挂载、禁用网络、输出防覆盖
-和无裁判密钥时提前失败。未调用真实模型裁判，未验证 API 权限或实际评分效果。

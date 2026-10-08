@@ -110,20 +110,7 @@ Designer 在 `design` 输出 `assets` 请求，Builder 在 `draft` 准备占位�
 .venv/bin/game-agent resume runs/mygame --resolve-file 'guardian_mesh=/绝对路径/已取回模型.glb'
 ```
 
-二者按实际核对结果选择，只处理不确定提交。明确失败的作业保留 `failed`，不自动重新付费；修复原因后另建实验，或使用下面适用的显式迁移工具，不删除回执诱发重复提交。`job.json` 可能含短期下载 URL，实验目录不作为公共源码提交。
-
-### 从 hy-image-v3.0 恢复未完成的资产阶段
-
-旧图片模型下线后，仅更改示例配置不会改变已保存的实验。对已经停止、停在 `assets` 阶段且仍配置旧模型的实验，可执行：
-
-```bash
-.venv/bin/python scripts/migrate_hunyuan_v3.py runs/mygame
-.venv/bin/game-agent resume runs/mygame
-```
-
-第一条命令只准备恢复，不加载密钥、不调用生成服务，也不启动 Agent；第二条才真正恢复执行。迁移工具持有运行锁，并先检查原请求指纹、草稿版本及已完成图片的 SHA-256。它保留已完成图片及原 `job.json`，将实验默认图片模型更新为 `hy-image-v3`，只将明确失败且没有生成结果的旧图片请求置为待提交。未提交的图片也使用新模型。后续资产清单仍会如实包含旧、新两种模型，不会把旧图片重新标注成新模型。
-
-原配置、失败回执的完整文本与保留文件的哈希记录在 `migrations/hy-image-v3-round-NNNN.json`。若迁移写入中途被打断，可重复执行同一命令；一旦后续生成已改变待重试回执，工具会拒绝将它再次重置。未明确确认提交结果的 `uncertain/submitting` 以及仍待下载的图片会阻止迁移，应先核对或取回原结果。
+二者按实际核对结果选择，只处理不确定提交。明确失败的作业保留 `failed`，不自动重新付费；修复原因后另建实验，不删除回执诱发重复提交。`job.json` 可能含短期下载 URL，实验目录不作为公共源码提交。
 
 ## HTML、Godot 与 Blender 容器环境
 

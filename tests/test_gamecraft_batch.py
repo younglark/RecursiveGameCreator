@@ -255,49 +255,68 @@ def test_invalid_cli_arguments(prepared):
         batch.parser().parse_args(["run", str(root), "--rounds", "5"])
 
 
-def test_fixed_team_split_native_configs_relative_paths_and_shared_hash(prepared, monkeypatch):
+def test_task_file_native_configs_relative_paths_and_frozen_protocol(prepared, monkeypatch):
     root, _, bench, template = prepared
-    groups = read_json(batch.ASSIGNMENT)
-    assert set(groups) == {"cjj", "why", "jmd"}
-    assert len({t for group in groups.values() for t in group}) == 45
-    for group in groups.values():
-        assert len(group) == 15
-        assert len({t.split("-")[0] for t in group}) == 15
-        for name in group:
-            path = bench / "tasks" / name / "instruction.md"
-            path.parent.mkdir(parents=True)
-            path.write_text(f"Full public instruction: {name}\n")
+    task_file = SCRIPT.parents[1] / "examples/gamecraft-tasks.json"
+    names = batch.read_task_file(task_file)
+    assert len(set(names)) == len(names) == 45
+    for name in names:
+        path = bench / "tasks" / name / "instruction.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"Full public instruction: {name}\n")
     monkeypatch.setattr(batch, "git", lambda _, *args: batch.BENCH_COMMIT if args[0] == "rev-parse" else "")
     monkeypatch.setattr(batch, "code_identity", lambda: {"commit": "fixture", "files_sha256": "fixture"})
     monkeypatch.setattr(batch.subprocess, "Popen", forbidden)
     judge = root.parent / "judge.env"
     judge.write_text("GAMECRAFT_BENCH_JUDGE=openai\nGAMECRAFT_BENCH_JUDGE_MODEL=fixture\nOPENAI_API_KEY=secret-not-saved\n")
     hashes = set()
-    for worker in batch.MEMBERS:
-        target = root.parent / worker
-        manifest = batch.prepare(bench, template, target, worker=worker, score=True, judge_env_file=judge)
-        assert [t["id"] for t in manifest["tasks"]] == groups[worker]
-        hashes.add(manifest["assignment_sha256"])
+    for attempt in range(2):
+        target = root.parent / f"batch-{attempt}"
+        manifest = batch.prepare(bench, template, target, task_file=task_file, score=True, judge_env_file=judge)
+        assert [t["id"] for t in manifest["tasks"]] == names
+        hashes.add(manifest["protocol_sha256"])
         assert not Path(manifest["benchmark"]).is_absolute()
         assert not Path(manifest["scoring"]["env_file"]).is_absolute()
-        config_path = target / "configs" / f"{groups[worker][0]}.json"
+        config_path = target / "configs" / f"{names[0]}.json"
         raw, config = read_json(config_path), batch.load_config(config_path)
         assert raw["benchmark"]["evidence_source"] == "player_recording"
         assert not Path(raw["benchmark"]["path"]).is_absolute()
         assert not Path(raw["assets"]["env_file"]).is_absolute()
-        assert config["model"] == "gpt-6-astra" and config["reasoning"] == "high" and config["rounds"] == 3
-        assert config["player"]["parallel_episodes"] == 1 and config["runtime"]["render_threads"] == 4
+        original = batch.load_config(template)
+        assert config["model"] == original["model"] and config["reasoning"] == original["reasoning"]
+        assert config["rounds"] == 3
+        assert config["player"]["parallel_episodes"] == original["player"]["parallel_episodes"]
+        assert config["runtime"]["render_threads"] == original["runtime"]["render_threads"]
         before = {p: p.read_bytes() for p in target.rglob("*") if p.is_file()}
-        assert batch.run_batch(target, dry_run=True)["counts"] == {"pending": 15}
-        assert batch.run_batch(target, jobs=2, dry_run=True)["counts"] == {"pending": 15}
+        assert batch.run_batch(target, dry_run=True)["counts"] == {"pending": 45}
+        assert batch.run_batch(target, jobs=2, dry_run=True)["counts"] == {"pending": 45}
         assert before == {p: p.read_bytes() for p in target.rglob("*") if p.is_file()}
-        assert len(read_json(target / "results.json")["rounds"]) == 45
+        assert len(read_json(target / "results.json")["rounds"]) == 135
         assert "secret-not-saved" not in "".join(p.read_text() for p in target.rglob("*.json"))
         manifest["scoring"]["judge_max_tokens"] = 2048
         atomic_json(target / "batch.json", manifest)
         with pytest.raises(ValueError, match="scoring settings"):
             batch.load_manifest(target)
     assert len(hashes) == 1
+
+
+@pytest.mark.parametrize("names", [[], ["alpha-game", "alpha-game"], {"tasks": ["alpha-game"]}, [None]])
+def test_invalid_task_file_does_not_create_batch(prepared, names):
+    root, _, bench, template = prepared
+    task_file = root.parent / "tasks.json"
+    atomic_json(task_file, names)
+    target = root.parent / "invalid-batch"
+    with pytest.raises(ValueError, match="Task file"):
+        batch.prepare(bench, template, target, task_file=task_file, mock=True)
+    assert not target.exists()
+
+
+def test_task_file_and_individual_task_are_mutually_exclusive(prepared):
+    root, _, bench, template = prepared
+    target = root.parent / "invalid-batch"
+    with pytest.raises(ValueError, match="not both"):
+        batch.prepare(bench, template, target, task_file=root / "unused.json", selected=["alpha-game"])
+    assert not target.exists()
 
 
 @pytest.fixture
@@ -557,11 +576,11 @@ def test_finished_score_survives_interruption_before_scheduler_receipt(score_bat
     assert row["status"] == "scored" and row["recording_score"] == .1
 
 
-def test_team_code_changes_and_judge_model_changes_block_resume(tmp_path, monkeypatch):
-    atomic_json(tmp_path / "assignment.json", {"code": {"files_sha256": "old"}})
+def test_protocol_code_changes_and_judge_model_changes_block_resume(tmp_path, monkeypatch):
+    atomic_json(tmp_path / "protocol.json", {"code": {"files_sha256": "old"}})
     monkeypatch.setattr(batch, "code_identity", lambda: {"files_sha256": "new"})
     with pytest.raises(ValueError, match="Framework code changed"):
-        batch.check_environment(tmp_path, {"worker": "cjj", "mode": "mock"})
+        batch.check_environment(tmp_path, {"protocol_sha256": "fixture", "mode": "mock"})
     env = tmp_path / "judge.env"
     env.write_text("GAMECRAFT_BENCH_JUDGE_MODEL=first\nOPENAI_API_KEY=secret1\n")
     profile = batch.judge_profile(env)

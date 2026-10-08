@@ -33,7 +33,7 @@ exclude = ["**/__pycache__/**", "**/*.pyc", "**/.DS_Store", "**/*.local.json"]
 [tool.hatch.build.targets.sdist]
 include = [
   "/src", "/tests", "/examples", "/docker", "/scripts", "/docs",
-  "/README.md", "/LICENSE", "/VALIDATION.md", "/CITATION.cff", "/CONTRIBUTING.md", "/RELEASE_CHECKLIST.md", "/pyproject.toml",
+  "/README.md", "/LICENSE", "/CITATION.cff", "/CONTRIBUTING.md", "/pyproject.toml",
   "/uv.lock", "/.gitignore", "/.github",
 ]
 

@@ -25,9 +25,8 @@ from game_agent_lite.types import CONFIG_SCHEMA, validate
 from game_agent_lite.usage import reference as usage_reference, saved_reference
 
 ROOT = Path(__file__).resolve().parents[1]
-FORMAT = "gameasg-batch-v1"
+FORMAT = "gameasg-batch-v2"
 BENCH_COMMIT = "6427cb6517ce11ff350ec45fcae17b67c5aec245"
-MEMBERS = ("cjj", "why", "jmd")
 DOCS = ("target.md", "game-spec.md", "tdd.md")
 IMAGE = "gamebench-env:v2.0"
 REPORTS = ("summary-test.json", "summary.json", "report-l1.json", "report-l2.json",
@@ -73,12 +72,12 @@ def benchmark_identity(bench):
     return commit
 
 
-def assignments(bench):
+def discover(bench):
     names = sorted(p.name for p in (bench / "task").iterdir()
                    if p.is_dir() and all((p / name).is_file() for name in DOCS))
     if len(names) != 47:
         raise ValueError("GameASG 应有 47 题；任务数量变化，请核对版本")
-    return {member: names[i::3] for i, member in enumerate(MEMBERS)}
+    return names
 
 
 def slug(value):
@@ -95,16 +94,16 @@ def paths(batch, manifest, task):
     return work, run, output
 
 
-def prepare(bench, template, *, worker=None, tasks=(), exp_id=None, env_file=None,
+def prepare(bench, template, *, all_tasks=False, tasks=(), exp_id=None, env_file=None,
             image=IMAGE, dry_run=False):
     bench, template = bench.resolve(), template.resolve()
     commit = benchmark_identity(bench)
-    assignment = assignments(bench)
-    selected = assignment[worker] if worker else list(tasks)
-    if (not selected or len(selected) != len(set(selected))
-            or not set(selected) <= {t for group in assignment.values() for t in group}):
-        raise ValueError("请选择一个成员或不重复的有效 --tasks")
-    exp_id = slug(exp_id or f"gameasg-{worker or 'custom'}-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+    available = discover(bench)
+    selected = available if all_tasks else list(tasks)
+    if ((all_tasks and tasks) or not selected or len(selected) != len(set(selected))
+            or not set(selected) <= set(available)):
+        raise ValueError("请选择 --all-tasks 或不重复的有效 --tasks")
+    exp_id = slug(exp_id or "gameasg-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
     batch = ROOT / "validation/gameasg" / exp_id
     runs = ROOT / "runs/gameasg" / exp_id
     if any(p.exists() for p in (batch, runs, bench / "output" / exp_id)):
@@ -122,12 +121,12 @@ def prepare(bench, template, *, worker=None, tasks=(), exp_id=None, env_file=Non
         raise ValueError("请先配置 .env.hunyuan，或提供 --env-file；不会读取或保存密钥内容")
     env_file = env_file.expanduser().resolve()
     code = code_identity()
-    shared = {"assignment": assignment, "benchmark_commit": commit, "code_sha256": code["files_sha256"],
+    shared = {"task_ids": selected, "benchmark_commit": commit, "code_sha256": code["files_sha256"],
               "template_sha256": file_hash(template), "model": config["model"],
               "reasoning": config["reasoning"], "rounds": 1, "player": config["player"], "image": image}
-    manifest = {"format": FORMAT, "exp_id": exp_id, "worker": worker,
+    manifest = {"format": FORMAT, "exp_id": exp_id,
                 "created_at": time.time(), "code": code, **shared,
-                "assignment_sha256": digest(shared), "runs": os.path.relpath(runs, batch),
+                "protocol_sha256": digest(shared), "runs": os.path.relpath(runs, batch),
                 "benchmark": {"path": os.path.relpath(bench, batch), "commit": commit}, "tasks": []}
     prepared = []
     for name in selected:
@@ -505,9 +504,9 @@ def run_batch(batch, *, dry_run=False):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    prep = commands.add_parser("prepare", help="冻结分工与公开文档；不调用模型、Docker 或评测")
+    prep = commands.add_parser("prepare", help="冻结任务与公开文档；不调用模型、Docker 或评测")
     selection = prep.add_mutually_exclusive_group(required=True)
-    selection.add_argument("--worker", choices=MEMBERS)
+    selection.add_argument("--all-tasks", action="store_true", help="运行全部 47 个公开任务")
     selection.add_argument("--tasks", nargs="+")
     prep.add_argument("--bench", type=Path, default=ROOT / "benchmarks/GameASG-Bench")
     prep.add_argument("--config", type=Path, default=ROOT / "examples/html-docker.json")
@@ -523,11 +522,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "prepare":
-            batch, manifest = prepare(args.bench, args.config, worker=args.worker, tasks=args.tasks or (),
+            batch, manifest = prepare(args.bench, args.config, all_tasks=args.all_tasks, tasks=args.tasks or (),
                 exp_id=args.exp_id, env_file=args.env_file, image=args.image, dry_run=args.dry_run)
-            print(json.dumps({"batch": str(batch), "worker": manifest["worker"], "tasks": [t["id"] for t in manifest["tasks"]],
+            print(json.dumps({"batch": str(batch), "tasks": [t["id"] for t in manifest["tasks"]],
                 "rounds": 1, "model": manifest["model"], "reasoning": manifest["reasoning"], "player": manifest["player"],
-                "assignment_sha256": manifest["assignment_sha256"], "dry_run": args.dry_run}, ensure_ascii=False, indent=2))
+                "protocol_sha256": manifest["protocol_sha256"], "dry_run": args.dry_run}, ensure_ascii=False, indent=2))
             return 0
         batch = args.batch.resolve()
         if args.command == "stop":

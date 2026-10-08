@@ -134,6 +134,6 @@ env GAME_AGENT_RUNTIME_IMAGE=rsi-gamecreator/runtime:full-v1 \
   .venv/bin/pytest tests/test_runtime_integration.py tests/test_runtime_full_integration.py -ra
 ```
 
-覆盖 HTML/Godot 并行输入、存档隔离、录像、停止、恢复、Blender 导出并被 Godot 导入、Blender 异常与取消、容器 Node 构建。新增完整链路测试将宿主引擎路径设为不存在，验证不回退本机工具；既有视频格式测试的独立探针仍使用宿主 `ffprobe`。这些测试不调用模型或生成服务。具体结果见 [验证记录](../VALIDATION.md)。
+覆盖 HTML/Godot 并行输入、存档隔离、录像、停止、恢复、Blender 导出并被 Godot 导入、Blender 异常与取消、容器 Node 构建。新增完整链路测试将宿主引擎路径设为不存在，验证不回退本机工具；既有视频格式测试的独立探针仍使用宿主 `ffprobe`。这些测试不调用模型或生成服务。运行命令见 [测试指南](testing.md)。
 
 软件渲染不保证复杂 3D 性能；暂不提供 GPU、C#/.NET、额外原生扩展或联网游戏环境。引擎支持与固定夹具通过不等于任意生成游戏都可通关，也不证明游戏更好玩。

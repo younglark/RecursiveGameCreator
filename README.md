@@ -181,7 +181,7 @@ The strict task success rate on GameASG-Bench improves by **34.1 percentage poin
 | [Coding-Native Player](docs/player-policy.md) | Policy interfaces, trajectories, and execution |
 | [Benchmarks](docs/benchmarks.md) | GameCraft-Bench and GameASG-Bench setup |
 | [Performance and Storage](docs/performance.md) | Scheduling, artifact retention, and efficiency changes |
-| [Validation](VALIDATION.md) | Executed checks and their scope |
+| [Testing](docs/testing.md) | Offline checks, integration tests, and package builds |
 
 ```text
 src/game_agent_lite/   Controller, role prompts, and engine interfaces
@@ -202,7 +202,7 @@ Run the offline regression suite and build the package:
 .venv/bin/uv build
 ```
 
-Runtime integration checks are opt-in; instructions and executed results are listed in [VALIDATION.md](VALIDATION.md). Contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Runtime integration checks are opt-in; instructions are listed in [Testing](docs/testing.md). Contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Citation
 

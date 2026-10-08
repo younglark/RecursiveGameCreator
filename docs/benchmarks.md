@@ -38,6 +38,8 @@ Prepare a three-round batch for one public task. Preparation freezes requirement
 .venv/bin/python scripts/run_gamecraft_batch.py status runs/gamecraft/example
 ```
 
+To run the included 45-task set, replace `--task racing-drift-circuit` with `--task-file examples/gamecraft-tasks.json` and choose a new batch directory. A custom task file is a JSON list of distinct public task IDs. Task-file batches use native Player recordings and retain the model and Player settings from your config. Task order and evaluation settings are frozen when preparing the batch.
+
 The generation batch and the external scorer are separate. To score native Player recordings, copy `docker/gamecraft/judge.env.example` to `.env.gamecraft`, fill it locally, and use the explicit `--score --judge-env-file .env.gamecraft` options at batch preparation. Inspect [scoring requirements](gamecraft-scoring.md) before doing so; scoring calls an external judge.
 
 Evidence modes are explicit: `official_replay` exports input events and invokes the upstream replayer; `player_recording` uses actual Player captures. They are different evidence-collection protocols and must be labeled accordingly. Efficiency changes do not switch an existing run between these modes.
@@ -71,10 +73,12 @@ Select public task IDs from the benchmark and provide a local config:
   --dry-run
 ```
 
-Remove `--dry-run` only after reviewing the reported configuration. The command prints the generated batch path; pass that exact relative path to `run`, `status` or `stop`. This historical GameASG adapter uses one generation round, unlike the GameCraft three-round adapter. It currently requires an asset environment file during preparation; basic nonbenchmark quickstarts do not.
+Use `--all-tasks` instead of `--tasks astroman` to select all 47 public tasks. Remove `--dry-run` after reviewing the reported configuration. The command prints the generated batch path; pass that exact path to `run`, `status` or `stop`. This GameASG adapter uses one generation round, unlike the GameCraft three-round adapter. It currently requires an asset environment file during preparation; basic nonbenchmark quickstarts do not.
 
 ## Reproducibility
 
-Keep benchmark revisions, runtime image IDs, task inputs, capture modes, judge settings and generated version/evidence identities with results. Resume rejects changed frozen settings. The repository's team-assignment helpers are optional historical experiment conveniences; use task selection for independent reproduction.
+Keep benchmark revisions, runtime image IDs, task inputs, capture modes, judge settings and generated version/evidence identities with results. Resume rejects changed frozen settings. Select tasks explicitly or use a task list. Keep the selected task IDs with reported results.
+
+Batch manifests use format v2. Prepare a new batch when switching from an earlier adapter; existing v1 manifests are not rewritten or resumed with the new format.
 
 Model calls, asset generation and external judging may incur costs. The offline test suite does not invoke them.
