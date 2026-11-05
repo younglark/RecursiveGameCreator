@@ -84,7 +84,6 @@ For a benchmark that uses another runtime, build a matching role image with `--b
 | Docker connection failure | Start Docker and verify `docker info` as the same normal user |
 | Missing local image | Build the runtime, then the role image, using the exact configured tags |
 | Login exists but authentication file is missing | Use file-backed login or explicitly configure `auth_file`; do not print the file |
-| `bwrap: setting up uid map` during a Grok role call | Unprivileged user namespaces are blocked, so the Grok sandbox cannot start. The call fails and does not continue unsandboxed |
 | Asset credential error | Configure `.env.hunyuan`, or set the corresponding asset counts to `0` |
 | Existing run directory | Use `resume`, or choose a new `--run-dir` |
 | Rendering slows with concurrency | Reduce game/episode concurrency; review CPU and memory pressure |

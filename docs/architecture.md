@@ -114,8 +114,8 @@ Harbor 的角色 verifier 检查输出文件是否为可解析 JSON，宿主进�
 | 角色 | 上下文与输出 | 当前边界 |
 |---|---|---|
 | Designer | 输出 `hypothesis/changes/acceptance/assets` | 可设计美术、剧情、玩法，但没有强制单独输出完整 GDD、美术圣经或剧情文档 |
-| Builder | 读取方案，在项目目录编写代码；草稿阶段准备占位与 Blender 脚本，集成阶段读取生成结果 | 摘要不是验收证明；候选不能自行修改宿主证据和晋升规则 |
-| Player | 初始截图、公开状态、引擎输入能力；通过请求文件操作游戏；输出 `experience/problems/suggestions` | Harbor 模式不挂载游戏源码；本地 Codex 仅依靠工作目录、sandbox 和角色指令，不是严格读取隔离，也不是实时控制器 |
+| Builder | 读取方案，在项目目录编写代码；草稿阶段准备占位与 Blender 脚本，集成阶段读取生成结果 | 摘要不是验收证明。晋升由宿主决定。Harbor 的挂载和本地 Codex 的 workspace sandbox 限制候选改写宿主证据；`backend: grok` 使用 `--sandbox off`，没有这层目录限制 |
+| Player | 初始截图、公开状态、引擎输入能力；通过请求文件操作游戏；输出 `experience/problems/suggestions` | Harbor 模式不挂载游戏源码；本地 Codex 仅依靠工作目录、sandbox 和角色指令，不是严格读取隔离，也不是实时控制器。`backend: grok` 同样使用 `--sandbox off`，目录限制只来自角色指令 |
 | Reviewer | 仅获得 A/B 的试玩摘要、实际输入、前后截图和录像包；输出 `winner/reason/evidence` | 运行环境可能不能直接观看视频；此时应说明限制并依据能读取的证据判断 |
 
 提示词：[Designer](<../src/game_agent_lite/prompts/designer.md>)、[Builder](<../src/game_agent_lite/prompts/builder.md>)、[Player](<../src/game_agent_lite/prompts/player.md>)、[Reviewer](<../src/game_agent_lite/prompts/reviewer.md>)。

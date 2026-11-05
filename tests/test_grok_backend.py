@@ -44,7 +44,7 @@ class Runner:
     def run(self, argv, cwd, log, **kwargs):
         self.seen = (argv, kwargs["env"], cwd)
         home = Path(kwargs["env"]["GROK_HOME"])
-        self.sandbox = (home / "sandbox.toml").read_text()
+        self.sandbox_written = (home / "sandbox.toml").exists()
         self.auth_linked = (home / "auth.json").is_symlink()
         atomic_json(cwd / "result.json", {"summary": "written by the model"})
         log.write_text(result_log(self.structured, self.usage, **self.extra))
@@ -68,7 +68,7 @@ def test_grok_builder_command_isolates_home_and_replaces_model_file(tmp_path, co
     assert "--add-dir" not in argv and "--trust" not in argv
     assert argv[argv.index("-m") + 1] == "grok-4.7"
     assert argv[argv.index("--effort") + 1] == "high"
-    assert argv[argv.index("--sandbox") + 1] == "role"
+    assert argv[argv.index("--sandbox") + 1] == "off"
     assert argv[argv.index("--tools") + 1] == (
         "read_file,grep,list_dir,search_replace,write,run_terminal_cmd")
     assert json.loads(argv[argv.index("--json-schema") + 1])["required"] == [
@@ -79,9 +79,7 @@ def test_grok_builder_command_isolates_home_and_replaces_model_file(tmp_path, co
     assert env["GROK_MEMORY"] == "0" and env["GROK_DISABLE_AUTOUPDATER"] == "1"
     assert "XAI_API_KEY" not in env and "HUNYUAN_API_KEY" not in env
     assert runner.auth_linked
-    sandbox = runner.sandbox
-    assert 'extends = "workspace"' in sandbox
-    assert json.dumps(str(project.resolve())) in sandbox
+    assert not runner.sandbox_written
     prompt = (job / "prompt.txt").read_text()
     assert "Write files with tools" in prompt
     assert "final answer is only the JSON object" in prompt
@@ -95,16 +93,16 @@ def test_grok_builder_command_isolates_home_and_replaces_model_file(tmp_path, co
     assert read_json(job / "result.json")["usage"]["input_tokens"] == 3931
 
 
-def test_player_sandbox_does_not_grant_project_writes(tmp_path, config, monkeypatch):
+def test_player_also_runs_without_a_kernel_sandbox(tmp_path, config, monkeypatch):
     monkeypatch.delenv("XAI_API_KEY", raising=False)
     grok_config(config, tmp_path)
     runner = Runner({"experience": "played", "problems": [], "suggestions": []})
     project = tmp_path / "source"
     project.mkdir()
     Agent(config, runner).call("player", tmp_path / "job", {}, project=project)
-    sandbox = runner.sandbox
-    assert "read_write" not in sandbox
-    assert str(project.resolve()) not in sandbox
+    argv = runner.seen[0]
+    assert argv[argv.index("--sandbox") + 1] == "off"
+    assert not runner.sandbox_written
 
 
 def test_api_key_is_passed_only_to_the_grok_process(tmp_path, config, monkeypatch):

@@ -26,7 +26,7 @@ cp examples/godot.json examples/godot.local.json
 - `build_command` 和 `check_command` 是参数数组，工作目录为候选游戏项目，不使用 shell 展开。含空格的参数独立写成一个数组元素。
 - Saved file references are relative to the run directory. Absolute paths are resolved only for execution and Docker mounts. The default login refers to the current user.
 
-`examples/*.local.json` 和 `.env.hunyuan` 被 Git 忽略。使用本地 Codex 时，将完整配置中的 `backend` 改为 `codex`。使用 Grok Build 时改为 `grok`，并把 `model` 设为 `grok models` 列出的 id。两种方式都不需要修改角色或核心模块。Grok 在宿主执行，不进入 Harbor 镜像；沙箱无法启动时该次调用失败，不会改为无沙箱执行。
+`examples/*.local.json` 和 `.env.hunyuan` 被 Git 忽略。使用本地 Codex 时，将完整配置中的 `backend` 改为 `codex`。使用 Grok Build 时改为 `grok`，并把 `model` 设为 `grok models` 列出的 id。两种方式都不需要修改角色或核心模块。Grok 在宿主执行，不进入 Harbor 镜像。当前角色调用使用 `--sandbox off`，因为部分 Linux 上 bubblewrap 无法建立 user namespace。
 
 ## 默认配置
 

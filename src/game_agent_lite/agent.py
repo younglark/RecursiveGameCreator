@@ -192,13 +192,12 @@ class Agent:
                     pass
         return result
 
-    def grok_command(self, home: Path, io: Path, prompt_path: Path, schema: dict, role: str,
-                     project: Path | None):
-        """One fresh headless Grok process. Its home holds only this call's sandbox and login."""
-        lines = ["[profiles.role]", 'extends = "workspace"']
-        if role == "builder" and project is not None:
-            lines.append("read_write = [" + json.dumps(str(project.resolve())) + "]")
-        (home / "sandbox.toml").write_text("\n".join(lines) + "\n")
+    def grok_command(self, home: Path, io: Path, prompt_path: Path, schema: dict, _role: str,
+                     _project: Path | None):
+        """One fresh headless Grok process. Its home holds only this call's login.
+
+        `--sandbox off` avoids bubblewrap user namespaces on hosts that block them.
+        """
         env = child_env()
         env["GROK_HOME"] = str(home)
         env["GROK_MEMORY"] = "0"
@@ -215,7 +214,7 @@ class Agent:
                 "--output-format", "streaming-messages-json",
                 "--json-schema", json.dumps(schema, separators=(",", ":"), ensure_ascii=False),
                 "--cwd", str(io.resolve()), "-m", self.config["model"],
-                "--effort", self.config["reasoning"], "--sandbox", "role", "--yolo",
+                "--effort", self.config["reasoning"], "--sandbox", "off", "--yolo",
                 "--verbatim", "--no-plan", "--no-subagents", "--disable-web-search",
                 "--no-auto-update", "--leader-socket", str((home / "leader.sock").resolve()),
                 "--tools", "read_file,grep,list_dir,search_replace,write,run_terminal_cmd"]
