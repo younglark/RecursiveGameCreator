@@ -21,7 +21,8 @@ pytestmark = pytest.mark.skipif(not os.environ.get('GAME_AGENT_RUNTIME_IMAGE'),
 def configure(config):
     config.update(backend='codex', godot='/missing/host/godot',
                   blender='/missing/host/blender', ffmpeg='/missing/host/ffmpeg')
-    config['runtime'].update(mode='docker', image=os.environ['GAME_AGENT_RUNTIME_IMAGE'])
+    config['runtime'].update(mode='docker', image=os.environ['GAME_AGENT_RUNTIME_IMAGE'],
+                             cli=os.environ.get('GAME_AGENT_CONTAINER_CLI', 'docker'))
     config['harbor_image'] = config['runtime']['image']
     config['player'].update(mode='policy', trajectories_per_version=3, parallel_episodes=3)
 

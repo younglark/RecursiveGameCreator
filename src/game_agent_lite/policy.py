@@ -70,8 +70,15 @@ class PolicyWorker:
             if not re.fullmatch(r"rsi-policy-[0-9a-f]{32}", name):
                 raise ValueError("Invalid policy container ownership marker")
             cli = read_json(marker).get("cli", "docker")
-            result = subprocess.run([cli, "rm", "-f", name], capture_output=True,
-                                    text=True, timeout=15, env=child_env())
+            result = None
+            for attempt in range(6):
+                result = subprocess.run([cli, "rm", "-f", name], capture_output=True,
+                                        text=True, timeout=15, env=child_env())
+                if not result.returncode or is_missing(result):
+                    break
+                if "RPC_E_DISCONNECTED" not in (result.stderr or ""):
+                    break
+                time.sleep(0.5 * (attempt + 1))
             if result.returncode and not is_missing(result):
                 raise RuntimeError("Cannot clean up policy container: " + redact(result.stderr))
             marker.unlink()

@@ -82,6 +82,20 @@ def same_settings(saved, current):
     return saved == current
 
 
+def _transient_cli(result) -> bool:
+    return "RPC_E_DISCONNECTED" in (result.stderr or "")
+
+
+def _invoke_retry(cli, args, attempts=6):
+    result = _invoke(cli, args)
+    for attempt in range(1, attempts):
+        if result.returncode == 0 or is_missing(result) or not _transient_cli(result):
+            return result
+        time.sleep(0.5 * attempt)
+        result = _invoke(cli, args)
+    return result
+
+
 def cleanup_owner(marker: Path, *, graceful=False):
     """Only remove a container whose unpredictable ownership label still matches."""
     if not marker.exists():
@@ -92,7 +106,7 @@ def cleanup_owner(marker: Path, *, graceful=False):
     if not re.fullmatch(r"rsi-game-[a-f0-9]{32}", name) or not re.fullmatch(r"[a-f0-9]{32}", token):
         raise ValueError("Invalid runtime container ownership marker")
     inspect_args = ["inspect", name, "-f", "json"] if cli == "wslc" else ["container", "inspect", name]
-    result = _invoke(cli, inspect_args)
+    result = _invoke_retry(cli, inspect_args)
     if result.returncode:
         if not is_missing(result):
             raise RuntimeError("Cannot inspect owned runtime: " + redact(result.stderr))
@@ -101,13 +115,16 @@ def cleanup_owner(marker: Path, *, graceful=False):
         if (data["Config"].get("Labels") or {}).get(OWNER_LABEL) != token:
             raise ValueError("Runtime ownership mismatch; refusing to stop another container")
         if graceful and data["State"]["Running"]:
-            result = _invoke(cli, ["stop", "--time", "20", name])
+            result = _invoke_retry(cli, ["stop", "--time", "20", name])
             if result.returncode and not is_missing(result):
                 raise RuntimeError("Cannot stop owned runtime: " + redact(result.stderr))
         for _ in range(50):
-            result = _invoke(cli, ["rm", "-f", name])
+            result = _invoke_retry(cli, ["rm", "-f", name])
             if not result.returncode or is_missing(result):
                 break
+            if _transient_cli(result):
+                time.sleep(.2)
+                continue
             if "removal" not in result.stderr or "already in progress" not in result.stderr:
                 raise RuntimeError("Cannot clean owned runtime: " + redact(result.stderr))
             # --rm and explicit cleanup can race while Docker removes the mount.

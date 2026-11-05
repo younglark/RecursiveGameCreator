@@ -88,6 +88,24 @@ def test_wslc_image_inspect_uses_json_format(monkeypatch):
     assert containers.validated_image("wslc", "runtime")["Architecture"] == "amd64"
 
 
+def test_wslc_cleanup_retries_disconnected_service(tmp_path, monkeypatch):
+    marker = tmp_path / "engine-runtime-owner.json"
+    atomic_json(marker, {"container": "rsi-game-" + "c" * 32, "owner": "d" * 32, "cli": "wslc"})
+    calls = {"n": 0}
+
+    def fake(binary, args, timeout=30):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return subprocess.CompletedProcess(args, 1, "", "RPC_E_DISCONNECTED")
+        return subprocess.CompletedProcess(args, 1, "", "找不到容器\nWSLC_E_CONTAINER_NOT_FOUND")
+
+    monkeypatch.setattr(runtime, "capture", fake)
+    monkeypatch.setattr(runtime.time, "sleep", lambda *_: None)
+    runtime.cleanup_owner(marker)
+    assert not marker.exists()
+    assert calls["n"] == 2
+
+
 def test_wslc_cleanup_accepts_localized_missing_container(tmp_path, monkeypatch):
     marker = tmp_path / "engine-runtime-owner.json"
     atomic_json(marker, {"container": "rsi-game-" + "a" * 32, "owner": "b" * 32, "cli": "wslc"})

@@ -24,7 +24,8 @@ pytestmark = pytest.mark.skipif(not os.environ.get("GAME_AGENT_RUNTIME_IMAGE"),
 @pytest.fixture
 def setup_game(tmp_path, config):
     config.update(engine="godot", backend="codex", entry="project.godot")
-    config["runtime"].update(mode="docker", image=os.environ["GAME_AGENT_RUNTIME_IMAGE"])
+    config["runtime"].update(mode="docker", image=os.environ["GAME_AGENT_RUNTIME_IMAGE"],
+                             cli=os.environ.get("GAME_AGENT_CONTAINER_CLI", "docker"))
     config["player"].update(mode="policy", trajectories_per_version=3, parallel_episodes=3)
     # No Codex dependency in a fixed policy test: this same image has Python.
     config["harbor_image"] = config["runtime"]["image"]
@@ -63,7 +64,8 @@ def action(keys=(), duration=150, pointer=None):
 def test_pointer_hits_button_across_viewport_sizes(tmp_path, config, logical_size, stretch_mode):
     """Check actual game/GUI coordinates, not just receipt of a mouse event."""
     config.update(engine="godot", backend="codex", entry="project.godot")
-    config["runtime"].update(mode="docker", image=os.environ["GAME_AGENT_RUNTIME_IMAGE"])
+    config["runtime"].update(mode="docker", image=os.environ["GAME_AGENT_RUNTIME_IMAGE"],
+                             cli=os.environ.get("GAME_AGENT_CONTAINER_CLI", "docker"))
     project = tmp_path / "pointer-source"
     snapshot(Path(__file__).parent / "fixtures/godot", project)
     install_bridge(project, "godot")
@@ -155,11 +157,20 @@ def test_parallel_games_inputs_saves_recording_and_cleanup(tmp_path, setup_game)
             initial = game.observe_state()
             assert initial["x"] == 20 and initial["clicks"] == 0 and not initial["saved"]
             data = read_json(game.output / "container-runtime.json")
-            inspect = json.loads(subprocess.check_output(["docker", "inspect", data["container"]], text=True))[0]
+            cli = config["runtime"]["cli"]
+            inspect_cmd = (["wslc", "inspect", data["container"], "-f", "json"] if cli == "wslc"
+                           else ["docker", "inspect", data["container"]])
+            inspect = json.loads(subprocess.check_output(inspect_cmd, text=True))[0]
             assert inspect["HostConfig"]["NetworkMode"] == "none"
-            assert inspect["HostConfig"]["ReadonlyRootfs"]
-            assert all(m["RW"] is False for m in inspect["Mounts"] if m["Destination"] in ("/source", "/framework/game_agent_lite"))
-            assert inspect["NetworkSettings"]["Ports"] == {}
+            if cli == "docker":
+                assert inspect["HostConfig"]["ReadonlyRootfs"]
+            def readonly(mount):
+                if "RW" in mount:
+                    return mount["RW"] is False
+                return mount.get("ReadWrite") is False
+            watched = ("/source", "/framework/game_agent_lite")
+            assert all(readonly(m) for m in inspect["Mounts"] if m["Destination"] in watched)
+            assert (inspect.get("NetworkSettings") or {}).get("Ports") in ({}, None)
             barrier.wait(timeout=45)
             game.policy_act(action(["ArrowRight"] if index == 0 else [], duration=600,
                                    pointer={"x": .5, "y": .5, "button": "left"} if index == 0 else None))
@@ -177,11 +188,24 @@ def test_parallel_games_inputs_saves_recording_and_cleanup(tmp_path, setup_game)
         finally:
             video = game.stop()
         assert video and video["path"].is_file()
-        probe = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=width,height,r_frame_rate", "-of", "json", str(video["path"])], text=True))
+        probe_args = ["-v", "error", "-select_streams", "v:0",
+                      "-show_entries", "stream=width,height,r_frame_rate", "-of", "json"]
+        try:
+            probe_out = subprocess.check_output(["ffprobe", *probe_args, str(video["path"])], text=True)
+        except FileNotFoundError:
+            cli = config["runtime"]["cli"]
+            probe_out = subprocess.check_output([
+                cli, "run", "--rm", "--pull=never", "--network", "none",
+                "--mount", f"type=bind,source={video['path'].parent},target=/video,readonly",
+                "--entrypoint", "ffprobe", config["runtime"]["image"],
+                *probe_args, f"/video/{video['path'].name}"], text=True)
+        probe = json.loads(probe_out)
         assert probe["streams"][0] == {"width": 640, "height": 360, "r_frame_rate": "2/1"}
         assert not game.owner_file.exists()
-        assert subprocess.run(["docker", "container", "inspect", data["container"]], capture_output=True).returncode
+        cli = config["runtime"]["cli"]
+        gone = (["wslc", "inspect", data["container"]] if cli == "wslc"
+                else ["docker", "container", "inspect", data["container"]])
+        assert subprocess.run(gone, capture_output=True).returncode
         return runtime["user_dir_name"]
 
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -253,7 +277,8 @@ func act(_state: Dictionary):
 def test_basic_3d_compatibility_rendering(tmp_path, config):
     """Rendered 3D fixture, not a generated game or a performance benchmark."""
     config.update(engine="godot", backend="codex", entry="project.godot")
-    config["runtime"].update(mode="docker", image=os.environ["GAME_AGENT_RUNTIME_IMAGE"])
+    config["runtime"].update(mode="docker", image=os.environ["GAME_AGENT_RUNTIME_IMAGE"],
+                             cli=os.environ.get("GAME_AGENT_CONTAINER_CLI", "docker"))
     project = tmp_path / "source-3d"
     project.mkdir()
     (project / "project.godot").write_text('''config_version=5
