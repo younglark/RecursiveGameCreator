@@ -39,6 +39,8 @@ python -c 'from pathlib import Path; assert (Path.home()/".codex/auth.json").is_
 
 The adapter uses file-backed authentication at `~/.codex/auth.json`. Set `auth_file` in a local configuration for another location. Keep credentials outside version control. Hunyuan credentials and benchmark-judge credentials are configured separately.
 
+The optional `grok` backend uses the host `grok` command. It is not installed by this setup script and is not baked into the Harbor role image. Sign in with `grok login`, or export `XAI_API_KEY`. The default login file is `~/.grok/auth.json` (`grok_auth_file`). Choose the model with `grok models`.
+
 The default model is `gpt-6-astra` with `high` reasoning. Choose a model available to your account in the configuration before running generation. Model, asset, and external judge services use the accounts you configure and may incur charges; setup and mock tests do not invoke them.
 
 ## Docker images
@@ -82,6 +84,7 @@ For a benchmark that uses another runtime, build a matching role image with `--b
 | Docker connection failure | Start Docker and verify `docker info` as the same normal user |
 | Missing local image | Build the runtime, then the role image, using the exact configured tags |
 | Login exists but authentication file is missing | Use file-backed login or explicitly configure `auth_file`; do not print the file |
+| `bwrap: setting up uid map` during a Grok role call | Unprivileged user namespaces are blocked, so the Grok sandbox cannot start. The call fails and does not continue unsandboxed |
 | Asset credential error | Configure `.env.hunyuan`, or set the corresponding asset counts to `0` |
 | Existing run directory | Use `resume`, or choose a new `--run-dir` |
 | Rendering slows with concurrency | Reduce game/episode concurrency; review CPU and memory pressure |

@@ -11,7 +11,7 @@ import tempfile
 
 from .store import atomic_json, file_paths, read_json, redact
 from .types import role_schema, validate
-from .usage import capture
+from .usage import capture, shape_grok_usage
 
 PACKAGE = Path(__file__).parent
 
@@ -132,10 +132,26 @@ class Agent:
                    "Return only the final JSON matching the schema.\n")
         if project is not None:
             prompt += f"Game source workspace: {project_path}.\n"
+        if self.config["backend"] == "grok":
+            prompt += ("Write files with tools. The final answer is only the JSON object "
+                       "matching the schema.\n")
         atomic_json(job / "request.json", {"role": role, "model": self.config["model"],
                                           "prompt": prompt, "usage": None})
+        reported = None
         if remote:
             argv, env = self.harbor_command(job, prompt, project, role)
+            try:
+                self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
+            finally:
+                self.cleanup_harbor(job / "harbor-owner.json")
+            self.check_harbor(job / "jobs")
+        elif self.config["backend"] == "grok":
+            prompt_path = job / "prompt.txt"
+            prompt_path.write_text(prompt)
+            with tempfile.TemporaryDirectory(prefix="game-agent-grok-") as home:
+                argv, env = self.grok_command(Path(home), io, prompt_path, schema, role, project)
+                self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
+            reported = self.finish_grok(job)
         else:
             argv = [self.config["codex"], "exec", "--json", "--ephemeral",
                     "--skip-git-repo-check", "--model", self.config["model"],
@@ -147,12 +163,6 @@ class Agent:
                 argv += ["--add-dir", str(project.resolve())]
             argv += [prompt]
             env = child_env()
-        if remote:
-            try:
-                self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
-            finally:
-                self.cleanup_harbor(job / "harbor-owner.json")
-        else:
             auth = Path(self.config["auth_file"]).expanduser()
             if not auth.is_file():
                 raise ValueError("Local Codex login file is missing; run codex login first")
@@ -161,12 +171,12 @@ class Agent:
                 (Path(home) / "auth.json").symlink_to(auth.resolve())
                 env["CODEX_HOME"] = home
                 self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
-        if remote:
-            self.check_harbor(job / "jobs")
         value = validate(read_json(io / "result.json"), schema)
         # Usage not reported by a backend stays unknown, never an invented zero.
         atomic_json(job / "result.json", {"role": role, "model": self.config["model"],
-                                         "result": value, "usage": self.usage(job / "process.log")})
+                                         "result": value,
+                                         "usage": reported if self.config["backend"] == "grok"
+                                         else self.usage(job / "process.log")})
         return value
 
     @staticmethod
@@ -181,6 +191,55 @@ class Agent:
                 except (ValueError, AttributeError):
                     pass
         return result
+
+    def grok_command(self, home: Path, io: Path, prompt_path: Path, schema: dict, role: str,
+                     project: Path | None):
+        """One fresh headless Grok process. Its home holds only this call's sandbox and login."""
+        lines = ["[profiles.role]", 'extends = "workspace"']
+        if role == "builder" and project is not None:
+            lines.append("read_write = [" + json.dumps(str(project.resolve())) + "]")
+        (home / "sandbox.toml").write_text("\n".join(lines) + "\n")
+        env = child_env()
+        env["GROK_HOME"] = str(home)
+        env["GROK_MEMORY"] = "0"
+        env["GROK_DISABLE_AUTOUPDATER"] = "1"
+        key = os.environ.get("XAI_API_KEY")
+        if key:
+            env["XAI_API_KEY"] = key
+        else:
+            auth = Path(self.config["grok_auth_file"]).expanduser()
+            if not auth.is_file():
+                raise ValueError("Grok login is missing; run grok login or set XAI_API_KEY")
+            (home / "auth.json").symlink_to(auth.resolve())
+        argv = [self.config["grok"], "--prompt-file", str(prompt_path.resolve()),
+                "--output-format", "streaming-messages-json",
+                "--json-schema", json.dumps(schema, separators=(",", ":"), ensure_ascii=False),
+                "--cwd", str(io.resolve()), "-m", self.config["model"],
+                "--effort", self.config["reasoning"], "--sandbox", "role", "--yolo",
+                "--verbatim", "--no-plan", "--no-subagents", "--disable-web-search",
+                "--no-auto-update", "--leader-socket", str((home / "leader.sock").resolve()),
+                "--tools", "read_file,grep,list_dir,search_replace,write,run_terminal_cmd"]
+        return argv, env
+
+    def finish_grok(self, job: Path):
+        """Host-owned result.json. A file the model wrote is not the role result."""
+        last = None
+        log = job / "process.log"
+        if log.is_file():
+            for line in log.read_text(errors="replace").splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("type") == "result":
+                    last = event
+        structured = last.get("structured_output") if isinstance(last, dict) else None
+        if not isinstance(structured, dict):
+            raise RuntimeError("Grok finished without structured output; see process.log")
+        atomic_json(job / "io" / "result.json", structured)
+        shaped = shape_grok_usage(last)
+        atomic_json(job / "grok-usage.json", shaped or {})
+        return shaped
 
     def harbor_command(self, job: Path, prompt: str, project: Path | None, role: str):
         config = self.config

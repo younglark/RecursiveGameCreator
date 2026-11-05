@@ -84,6 +84,8 @@ codex login status
 
 The adapter reads `~/.codex/auth.json`. The example configurations use `gpt-6-astra`; set `model` to one available to your account. Real generation uses your configured model service. See [Environment Setup](docs/setup.md#authentication) for authentication checks.
 
+To run the four roles with Grok Build instead, set `backend` to `grok` and `model` to an id listed by `grok models`. `examples/quickstart-html-grok.json` is the HTML quickstart with that backend. Authenticate with `grok login`, or set `XAI_API_KEY`. Grok runs on the host and does not use the Harbor role image. Game execution can still use the Docker runtime.
+
 ### Optional asset generation
 
 The quickstart examples run without external asset services. To enable Hunyuan image or 3D generation:

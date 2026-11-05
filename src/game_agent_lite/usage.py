@@ -106,9 +106,62 @@ def _events(path):
         return
 
 
+def shape_grok_usage(event):
+    """Map Grok's uncached prompt buckets onto the host ledger.
+
+    input_tokens from Grok excludes cache. cache_read and cache_creation are
+    separate from that number and from each other. The host ledger stores the
+    full prompt in input_tokens and cache as a subset. A missing bill stays
+    empty. An incomplete all-zero bill is not recorded as a real zero.
+    """
+    if not isinstance(event, dict) or not isinstance(event.get("usage"), dict):
+        return None
+    usage = event["usage"]
+
+    def whole(name):
+        value = usage.get(name)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            return None
+        if value < 0 or int(value) != value:
+            return None
+        return int(value)
+
+    uncached, cache_read = whole("input_tokens"), whole("cache_read_input_tokens")
+    cache_create, output = whole("cache_creation_input_tokens"), whole("output_tokens")
+    known = [item for item in (uncached, cache_read, cache_create, output) if item is not None]
+    incomplete = bool(event.get("usage_is_incomplete") or event.get("cost_is_partial"))
+    if incomplete and (not known or all(item == 0 for item in known)):
+        return None
+    shaped = {}
+    inputs = [item for item in (uncached, cache_read, cache_create) if item is not None]
+    cached = [item for item in (cache_read, cache_create) if item is not None]
+    if inputs:
+        shaped["input_tokens"] = sum(inputs)
+    if cached:
+        shaped["cached_input_tokens"] = sum(cached)
+    if output is not None:
+        shaped["output_tokens"] = output
+    reasoning = whole("reasoning_tokens")
+    if reasoning is not None:
+        shaped["reasoning_output_tokens"] = reasoning
+    cost = event.get("total_cost_usd")
+    if (not incomplete and isinstance(cost, (int, float)) and not isinstance(cost, bool)
+            and math.isfinite(cost) and cost >= 0):
+        shaped["cost_usd"] = float(cost)
+    if not any(shaped.get(key) is not None for key in ("input_tokens", "cached_input_tokens", "output_tokens")):
+        return None
+    return shaped
+
+
 def read_tokens(job, backend):
     """Use one authoritative representation per trial/session, never sum copies."""
     sources, values = [], []
+    if backend == "grok":
+        shaped = _json(job / "grok-usage.json")
+        tokens = normalize(shaped)
+        if any(tokens[key] is not None for key in FIELDS):
+            return tokens, ["grok-usage.json"]
+        return tokens, []
     if backend == "harbor" or (job / "jobs/role").is_dir():
         seen = set()
         for trial in sorted((job / "jobs/role").glob("*/")):

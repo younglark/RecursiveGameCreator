@@ -26,7 +26,7 @@ cp examples/godot.json examples/godot.local.json
 - `build_command` 和 `check_command` 是参数数组，工作目录为候选游戏项目，不使用 shell 展开。含空格的参数独立写成一个数组元素。
 - Saved file references are relative to the run directory. Absolute paths are resolved only for execution and Docker mounts. The default login refers to the current user.
 
-`examples/*.local.json` 和 `.env.hunyuan` 被 Git 忽略。使用本地 Codex 时，将完整配置中的 `backend` 改为 `codex`；不需要修改角色或核心模块。
+`examples/*.local.json` 和 `.env.hunyuan` 被 Git 忽略。使用本地 Codex 时，将完整配置中的 `backend` 改为 `codex`。使用 Grok Build 时改为 `grok`，并把 `model` 设为 `grok models` 列出的 id。两种方式都不需要修改角色或核心模块。Grok 在宿主执行，不进入 Harbor 镜像；沙箱无法启动时该次调用失败，不会改为无沙箱执行。
 
 ## 默认配置
 
@@ -34,12 +34,13 @@ cp examples/godot.json examples/godot.local.json
 |---|---|
 | `engine` | 必填：`html` 或 `godot` |
 | `brief` | 游戏需求；可通过 `--prompt` 提供并完整替换 |
-| `backend` | `harbor`；另支持 `codex`、`mock` |
-| `model` / `reasoning` | `gpt-6-astra` / `high`；需后端和账户支持 |
+| `backend` | `harbor`；另支持 `codex`、`grok`、`mock` |
+| `model` / `reasoning` | `gpt-6-astra` / `high`；Grok 后端改为 `grok models` 中的 id |
 | `rounds` / `max_actions` | `null`：不限轮数 / 试玩请求数量预算 |
 | `source` | `null`，可指定已有游戏目录；运行目录必须位于其外部 |
 | `build_command` / `check_command` | `[]`，按需配置构建 / 功能检查 |
-| `codex/harbor/godot/blender/ffmpeg` | 各自同名 PATH 命令 |
+| `codex/harbor/grok/godot/blender/ffmpeg` | 各自同名 PATH 命令 |
+| `grok_auth_file` | `~/.grok/auth.json`；已设置 `XAI_API_KEY` 时不必存在 |
 | `harbor_image` | `game-agent-lite/codex:0.153.4-godot-v1`，手动构建的本地镜像 |
 | `codex_version` | `0.153.4`，需与镜像中的版本一致 |
 | `auth_file` | `~/.codex/auth.json` |

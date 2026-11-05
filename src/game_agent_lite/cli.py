@@ -37,13 +37,13 @@ def load_config(path: Path, *, prompt: str | None = None) -> dict:
         validate_profile(config)
     if config["engine"] == "godot" and "entry" not in supplied:
         config["entry"] = "project.godot"
-    for name in ("source", "auth_file"):
+    for name in ("source", "auth_file", "grok_auth_file"):
         if config[name]:
             item = Path(config[name]).expanduser()
             config[name] = str((path.parent / item).resolve())
     env_file = Path(config["assets"]["env_file"]).expanduser()
     config["assets"]["env_file"] = str((path.parent / env_file).resolve())
-    for name in ("codex", "harbor", "godot", "blender", "ffmpeg"):
+    for name in ("codex", "harbor", "grok", "godot", "blender", "ffmpeg"):
         if "/" in config[name]:
             config[name] = str((path.parent / Path(config[name]).expanduser()).resolve())
     safe_path(path.parent, config["entry"])

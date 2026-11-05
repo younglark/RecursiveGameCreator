@@ -68,6 +68,7 @@ candidate 与 incumbent 仍顺序评测。不同实验和并行游戏实例会�
 | 宿主 Python | 控制循环、存储、版本校验、资产 API、引擎操作、录像、停止与恢复 |
 | Harbor / Docker | 运行各角色的 Codex 调用，挂载角色共享目录；Builder 另外获得候选项目目录 |
 | 本地 Codex 后端 | 可选执行后端，通过本机 Codex CLI 完成相同角色调用 |
+| 宿主 Grok 后端 | 可选执行后端，通过本机 `grok` 完成相同角色调用，不进入 Harbor 镜像 |
 | Mock 后端 | 离线验证流程与协议；不产生真实模型能力或游戏质量证据 |
 | HTML / Godot | 运行游戏，接收真实输入，提供图像和公开状态；HTML/Godot 可选统一运行容器 |
 | 混元 / Blender | 分别提供生成式图片、3D 资产和 Blender 脚本建模（可在容器执行） |
