@@ -1,5 +1,6 @@
 """Portable source-and-assets export, without rerunning models or games."""
 from pathlib import Path
+from .host import path_inside
 from .store import atomic_json, inventory, read_json, safe_path, snapshot, version
 
 
@@ -8,7 +9,7 @@ def export_game(run_dir, output, round_number=None):
     if output.exists() or output.is_symlink():
         raise FileExistsError("Export destination already exists")
     output = output.resolve()
-    if output.is_relative_to(root) or root.is_relative_to(output):
+    if path_inside(output, root) or path_inside(root, output):
         raise ValueError("Export must be outside the run")
     state = read_json(root / "state.json")
     if round_number is None:

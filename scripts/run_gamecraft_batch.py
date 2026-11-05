@@ -9,7 +9,6 @@ from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime
-import fcntl
 import hashlib
 import json
 import math
@@ -26,8 +25,10 @@ import uuid
 
 from jsonschema import ValidationError
 
-from game_agent_lite.paths import load_saved_config, portable_config
 from game_agent_lite.agent import child_env
+from game_agent_lite.containers import container_cli, inspect_image
+from game_agent_lite.host import lock_file, popen_kwargs, unlock_file
+from game_agent_lite.paths import load_saved_config, portable_config
 from game_agent_lite.cli import load_config
 from game_agent_lite.store import Store, atomic_json, file_hash, read_json, redact, safe_path, version
 from game_agent_lite.gamecraft_recordings import validate_recordings
@@ -237,12 +238,12 @@ def active(run):
     path = run / "run.lock"
     if not path.exists():
         return False
-    with path.open("r") as lock:
+    with path.open("a+") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(lock)
         except BlockingIOError:
             return True
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        unlock_file(lock)
     return False
 
 
@@ -448,9 +449,10 @@ def check_environment(batch, manifest):
     images = {}
     for task in manifest["tasks"]:
         config = load_config(paths(batch, task)[0])
+        cli = container_cli(config)
         for tag in (config["runtime"]["image"], config["benchmark"].get("image", EVAL_IMAGE)):
             if tag not in images:
-                info = json.loads(subprocess.check_output(["docker", "image", "inspect", tag, "--format", "{{json .}}"], text=True))
+                info = inspect_image(cli, tag)
                 images[tag] = {"id": info["Id"], "architecture": info["Architecture"], "os": info["Os"]}
     destination = batch / "environment.json"
     if destination.exists():
@@ -509,7 +511,7 @@ def launch(batch, task, command):
     stream.flush()
     try:
         process = subprocess.Popen(argv, cwd=batch, stdin=subprocess.DEVNULL, stdout=stream,
-                                   stderr=subprocess.STDOUT, env=child_env(), start_new_session=True)
+                                   stderr=subprocess.STDOUT, env=child_env(), **popen_kwargs())
     except BaseException:
         stream.close()
         raise

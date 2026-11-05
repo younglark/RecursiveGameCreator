@@ -66,7 +66,8 @@ candidate 与 incumbent 仍顺序评测。不同实验和并行游戏实例会�
 | 位置 | 承担的工作 |
 |---|---|
 | 宿主 Python | 控制循环、存储、版本校验、资产 API、引擎操作、录像、停止与恢复 |
-| Harbor / Docker | 运行各角色的 Codex 调用，挂载角色共享目录；Builder 另外获得候选项目目录 |
+| Harbor / Docker | `runtime.cli: docker` 时运行各角色的 Codex 调用，挂载角色共享目录；Builder 另外获得候选项目目录 |
+| WSLC | `runtime.cli: wslc` 时由宿主直接 `wslc run` 启动同一个角色镜像。不使用 Compose 或 Harbor。游戏、策略和回放容器同样改走 `wslc` |
 | 本地 Codex 后端 | 可选执行后端，通过本机 Codex CLI 完成相同角色调用 |
 | 宿主 Grok 后端 | 可选执行后端，通过本机 `grok` 完成相同角色调用，不进入 Harbor 镜像 |
 | Mock 后端 | 离线验证流程与协议；不产生真实模型能力或游戏质量证据 |

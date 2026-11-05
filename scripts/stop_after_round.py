@@ -4,21 +4,21 @@ For controllers already running without a round limit. This never launches a
 rollout, signals unrelated processes, or changes game/evaluation state.
 """
 import argparse
-import fcntl
 import os
 from pathlib import Path
 import time
 
+from game_agent_lite.host import lock_file, unlock_file
 from game_agent_lite.store import Store, atomic_json
 
 
 def controller_active(store):
     with (store.root / "run.lock").open("a+") as stream:
         try:
-            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(stream)
         except BlockingIOError:
             return True
-        fcntl.flock(stream, fcntl.LOCK_UN)
+        unlock_file(stream)
         return False
 
 
@@ -27,7 +27,7 @@ def watch(root, target):
     receipt = store.root / "rounds" / f"{target:04d}" / "select.json"
     output = store.root / "stop-after-round.json"
     with (store.root / "stop-after-round.lock").open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file(lock)
         record = {"pid": os.getpid(), "target_round": target, "status": "watching",
                   "started_at": time.time(), "stop_requested": False}
         atomic_json(output, record)

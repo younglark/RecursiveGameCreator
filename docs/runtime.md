@@ -48,7 +48,7 @@ docker build -t game-agent-lite/codex:0.153.4-godot-v1 docker
 
 Blender 使用 Debian 的嵌入式 Python，与 worker 的 Python 3.12 不同；向 `/usr/local` Python 安装 NumPy 不能替代 Blender 的依赖。镜像不含 Codex 登录、混元密钥或生成模型。框架包在运行时只读挂载，系统依赖固定在镜像内。
 
-当前真实验证平台为 macOS Docker Desktop / Linux arm64；Dockerfile 同时提供 amd64 分支，但 amd64 未实测。基础镜像标签、系统库可能随上游变化，以回执中的镜像内容 ID 和工具版本识别环境，不保证跨日期重新构建逐字节一致。
+macOS Docker Desktop / Linux arm64 是原有实测平台。Windows 使用 `runtime.cli: wslc` 和 [godot-wslc.json](../examples/godot-wslc.json)，并由此构建 Dockerfile 里的 amd64 分支。WSLC 3.0.3 不能表达 `--init`、`--read-only`、`--cap-drop` 和 `--security-opt`，所以容器根文件系统可写；只读挂载仍然生效。角色容器不经过 Harbor。基础镜像标签、系统库可能随上游变化，以回执中的镜像内容 ID 和工具版本识别环境，不保证跨日期重新构建逐字节一致。
 
 ## 新实验配置
 

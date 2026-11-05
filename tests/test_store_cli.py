@@ -39,6 +39,8 @@ def test_live_lock_and_crash_release(tmp_path, config):
 
 
 def test_snapshot_identity_and_credentials(tmp_path):
+    from tests.conftest import require_symlinks
+    require_symlinks(tmp_path)
     source = tmp_path / "source"
     source.mkdir()
     (source / "index.html").write_text("test")
@@ -57,6 +59,8 @@ def test_snapshot_identity_and_credentials(tmp_path):
 
 
 def test_snapshot_prunes_browser_caches_and_keeps_authored_files(tmp_path, monkeypatch):
+    from tests.conftest import require_symlinks
+    require_symlinks(tmp_path)
     source = tmp_path / "source"
     source.mkdir()
     authored = {"index.html": "game", "assets/car.glb": "model", "assets/card.png": "image",
@@ -92,6 +96,8 @@ def test_snapshot_prunes_browser_caches_and_keeps_authored_files(tmp_path, monke
 
 @pytest.mark.parametrize("link_type", ["file", "directory", "dangling"])
 def test_authored_asset_symlinks_remain_rejected(tmp_path, link_type):
+    from tests.conftest import require_symlinks
+    require_symlinks(tmp_path)
     source = tmp_path / "source"
     assets = source / "assets"
     assets.mkdir(parents=True)

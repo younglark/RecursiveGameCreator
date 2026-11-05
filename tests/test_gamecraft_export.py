@@ -289,6 +289,8 @@ def test_failed_episode_is_not_hidden_but_another_can_be_selected(saved_run, tmp
 
 
 def test_workspace_escape_and_output_overwrite_are_rejected(saved_run, tmp_path):
+    from tests.conftest import require_symlinks
+    require_symlinks(tmp_path)
     with pytest.raises(ValueError, match="outside"):
         gamecraft.export_gamecraft(saved_run, saved_run / "export")
     out = tmp_path / "existing"

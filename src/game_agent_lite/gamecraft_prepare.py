@@ -2,6 +2,7 @@
 from copy import deepcopy
 from pathlib import Path
 
+from .host import path_inside
 from .game import make_game
 from .gamecraft import MAX_DEMOS, MAX_SECONDS, _checked, _demo_time_limit, _scenario_map, export_gamecraft
 from .policy import PolicySession
@@ -22,7 +23,7 @@ def prepare_gamecraft(run_dir, output, *, round_number=None, episodes=None,
     if output.exists() or output.is_symlink():
         raise FileExistsError("Preparation output exists; choose a new directory")
     output = output.resolve()
-    if output.is_relative_to(root) or root.is_relative_to(output):
+    if path_inside(output, root) or path_inside(root, output):
         raise ValueError("Preparation output must be outside the source run")
     from .paths import load_saved_config
     config = load_saved_config(root)

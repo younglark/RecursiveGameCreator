@@ -563,6 +563,8 @@ def test_number_of_trajectories_is_configurable(tmp_path, policy_config, count):
 
 
 def test_policy_workspace_aliases_are_normalized(tmp_path, policy_config):
+    from tests.conftest import require_symlinks
+    require_symlinks(tmp_path)
     real = tmp_path / "real"
     real.mkdir()
     alias = tmp_path / "alias"

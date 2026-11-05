@@ -158,7 +158,8 @@ def read_tokens(job, backend):
         if any(tokens[key] is not None for key in FIELDS):
             return tokens, ["grok-result.json"]
         return tokens, []
-    if backend == "harbor" or (job / "jobs/role").is_dir():
+    # A WSLC role keeps backend harbor but writes Codex events to process.log.
+    if (job / "jobs/role").is_dir():
         seen = set()
         for trial in sorted((job / "jobs/role").glob("*/")):
             result = _json(trial / "result.json")
@@ -188,11 +189,11 @@ def read_tokens(job, backend):
                                 sessions[session_id] = (normalize(info["total_token_usage"]), log)
                     if sessions:
                         tokens = _combine([value[0] for value in sessions.values()])
-                        sources.extend(str(value[1].relative_to(job)) for value in sessions.values())
+                        sources.extend(value[1].relative_to(job).as_posix() for value in sessions.values())
                         source = None
             values.append(tokens)
             if source is not None:
-                sources.append(str(source.relative_to(job)))
+                sources.append(source.relative_to(job).as_posix())
     else:
         # Codex JSON output reports per-turn usage. Session cumulative snapshots
         # are deliberately not also added to these turn totals.

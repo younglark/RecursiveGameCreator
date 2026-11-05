@@ -46,7 +46,8 @@ class Runner:
         self.seen = (argv, kwargs["env"], cwd)
         home = Path(kwargs["env"]["GROK_HOME"])
         self.sandbox_written = (home / "sandbox.toml").exists()
-        self.auth_linked = (home / "auth.json").is_symlink()
+        auth = home / "auth.json"
+        self.auth_linked = auth.is_symlink() or auth.is_file()
         atomic_json(cwd / "result.json", {"summary": "written by the model"})
         text = result_log(self.structured, self.usage, **self.extra)
         for line in text.splitlines(keepends=True):

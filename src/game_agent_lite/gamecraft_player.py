@@ -18,6 +18,13 @@ from .types import GAMECRAFT_COVERAGE_SCHEMA, GAMECRAFT_COVERAGE_RESULTS_SCHEMA,
 EVAL_IMAGE = "rsi-gamecreator/gamecraft-eval:godot-4.6.2-v1"
 
 
+def _relative(path, base):
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:
+        return str(Path(path))
+
+
 def validate_profile(config):
     if not config.get("benchmark"):
         return
@@ -129,6 +136,7 @@ def check_coverage_assessment(report, root, plan):
 
 def replay_submission(config, submission, output, image_id, stop):
     """Use the recording image ID, no keys/network, official replay code read-only."""
+    from .containers import container_cli, game_user, run_argv
     from .runtime import OWNER_LABEL, cleanup_owner, options
     benchmark = Path(config["benchmark"]["path"]).resolve()
     if not (benchmark / "gamecraft_bench/verifier/replay.py").is_file():
@@ -137,24 +145,20 @@ def replay_submission(config, submission, output, image_id, stop):
     cleanup_owner(marker, graceful=True)
     token, name = uuid.uuid4().hex, "rsi-game-" + uuid.uuid4().hex
     output.mkdir(parents=True, exist_ok=True)
-    argv = ["docker", "run", "--rm", "--pull=never", "--init", "--name", name,
-            "--label", OWNER_LABEL + "=" + token, "--network", "none", "--read-only",
-            "--user", f"{os.getuid()}:{os.getgid()}", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges", "--shm-size", "1g",
-            "--tmpfs", "/tmp:rw,nosuid,nodev", "--workdir", "/output"]
-    for path, target, readonly in ((submission, "/submission", True),
-            (benchmark, "/opt/gamecraft-bench", True), (PACKAGE, "/framework/game_agent_lite", True),
-            (output, "/output", False)):
-        if "," in str(path):
-            raise ValueError("Docker mount paths cannot contain commas")
-        argv += ["--mount", f"type=bind,source={path.resolve()},target={target}" + (",readonly" if readonly else "")]
+    cli = container_cli(config)
     render_threads = options(config)["render_threads"]
-    for setting in ("PYTHONPATH=/framework:/opt/gamecraft-bench", "PYTHONDONTWRITEBYTECODE=1",
-                    "HOME=/tmp", "XDG_RUNTIME_DIR=/tmp", "LIBGL_ALWAYS_SOFTWARE=1",
-                    f"LP_NUM_THREADS={render_threads}"):
-        argv += ["--env", setting]
-    argv += ["--entrypoint", "python3", image_id, "-u", "-m", "game_agent_lite.gamecraft_replay_worker"]
-    atomic_json(marker, {"container": name, "owner": token})
+    argv = run_argv(
+        cli, name=name, label=OWNER_LABEL + "=" + token, network="none", user=game_user(cli),
+        shm="1g", tmpfs="/tmp:rw,nosuid,nodev", workdir="/output", interactive=False,
+        read_only_root=True,
+        mounts=((submission, "/submission", True), (benchmark, "/opt/gamecraft-bench", True),
+                (PACKAGE, "/framework/game_agent_lite", True), (output, "/output", False)),
+        envs=("PYTHONPATH=/framework:/opt/gamecraft-bench", "PYTHONDONTWRITEBYTECODE=1",
+              "HOME=/tmp", "XDG_RUNTIME_DIR=/tmp", "LIBGL_ALWAYS_SOFTWARE=1",
+              f"LP_NUM_THREADS={render_threads}"),
+        entrypoint="python3", image=image_id,
+        command=["-u", "-m", "game_agent_lite.gamecraft_replay_worker"])
+    atomic_json(marker, {"container": name, "owner": token, "cli": cli})
     try:
         atomic_json(output / "container-runtime.json", {"image_id": image_id,
                     "renderer": "mesa-software", "render_threads": render_threads})
@@ -209,7 +213,7 @@ def prepare_replay(session, report):
             preparation = {"source_policy_sha256": report["policy"]["sha256"],
                            "execution": report["settings"]["execution"]}
             export_recorded_report(session.project, recording, submission, expected=session.version,
-                round_number=session.context.get("round", 0), source_project=os.path.relpath(session.project, session.job),
+                round_number=session.context.get("round", 0), source_project=_relative(session.project, session.job),
                 preparation=preparation, source_episodes=list(range(1, len(specs) + 1)), source_specs=specs)
         _, manifest, _ = validate_gamecraft_submission(submission)
         if manifest["source_report_sha256"] != file_hash(recording):

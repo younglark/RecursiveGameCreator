@@ -3,7 +3,6 @@ import contextlib
 import ctypes
 import sys
 from datetime import datetime
-import fcntl
 import hashlib
 import json
 import os
@@ -13,6 +12,8 @@ import shutil
 import tempfile
 import time
 from typing import Iterator
+
+from .host import WINDOWS, lock_file, path_inside, unlock_file
 
 SECRETS: set[str] = set()
 # Reserved tooling/cache paths, not game source or evaluation evidence.
@@ -54,27 +55,28 @@ def atomic_json(path: Path, value, *, private: bool = False):
                          indent=2, allow_nan=False) + "\n"
     fd, name = tempfile.mkstemp(prefix=".write-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(name, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        if not WINDOWS:
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         Path(name).unlink(missing_ok=True)
 
 
 def read_json(path: Path):
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def safe_path(root: Path, relative: str) -> Path:
     candidate = (root / relative).resolve()
-    if Path(relative).is_absolute() or not candidate.is_relative_to(root.resolve()):
+    if Path(relative).is_absolute() or not path_inside(candidate, root.resolve()):
         raise ValueError("Path must stay inside its workspace")
     return candidate
 
@@ -140,6 +142,7 @@ def copy_file(source: Path, target: Path):
                 if clone(os.fsencode(source), os.fsencode(target), 0) == 0:
                     return target
         elif sys.platform.startswith("linux"):
+            import fcntl
             created = False
             try:
                 with source.open("rb") as src, target.open("xb") as dst:
@@ -156,7 +159,7 @@ def copy_file(source: Path, target: Path):
 def snapshot(source: Path | None, target: Path):
     if target.exists():
         raise FileExistsError(target)
-    if source is not None and target.resolve().is_relative_to(source.resolve()):
+    if source is not None and path_inside(target.resolve(), source.resolve()):
         raise ValueError("Snapshot destination cannot be inside source")
     target.mkdir(parents=True)
     if source is None:
@@ -209,7 +212,7 @@ class Store:
         # Never unlink the lock inode: another process may already be waiting on it.
         with (self.root / "run.lock").open("a+") as stream:
             try:
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(stream)
             except BlockingIOError:
                 raise RuntimeError("This run already has an active controller") from None
             try:
@@ -219,7 +222,7 @@ class Store:
                 stream.flush()
                 yield
             finally:
-                fcntl.flock(stream, fcntl.LOCK_UN)
+                unlock_file(stream)
 
     def event(self, kind: str, **data):
         now = time.time()

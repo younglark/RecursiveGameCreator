@@ -1,18 +1,18 @@
 """Per-user host game limit; OS leases are released when a process exits."""
 from contextlib import contextmanager
-import fcntl
 import json
-import os
 from pathlib import Path
 import tempfile
 import time
 import uuid
 
+from .host import lock_file, slot_owner, unlock_file
+
 
 class GameLease:
     def __init__(self, limit, stop=lambda: None, root=None):
         self.limit, self.stop = limit, stop
-        self.root = Path(root) if root else Path(tempfile.gettempdir()) / f"rgc-game-slots-{os.getuid()}"
+        self.root = Path(root) if root else Path(tempfile.gettempdir()) / f"rgc-game-slots-{slot_owner()}"
         self.file = self.path = None
 
     @contextmanager
@@ -21,7 +21,7 @@ class GameLease:
         with (self.root / "gate.lock").open("a+") as lock:
             while True:
                 try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_file(lock)
                     break
                 except BlockingIOError:
                     self.stop()
@@ -29,7 +29,7 @@ class GameLease:
             try:
                 yield
             finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+                unlock_file(lock)
 
     def acquire(self):
         if self.file is not None:
@@ -38,19 +38,25 @@ class GameLease:
             self.stop()
             with self.gate():
                 limits = []
+                stale = []
                 for path in self.root.glob("slot-*.lock"):
                     with path.open("r+") as active:
                         try:
-                            fcntl.flock(active, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            lock_file(active)
                         except BlockingIOError:
-                            limits.append(int(json.load(active)["limit"]))
+                            parts = path.name.split("-")
+                            if len(parts) >= 3 and parts[1].isdigit():
+                                limits.append(int(parts[1]))
                         else:
-                            path.unlink(missing_ok=True)
+                            unlock_file(active)
+                            stale.append(path)
+                for path in stale:
+                    path.unlink(missing_ok=True)
                 # Respect the most restrictive active run, even across batches.
                 if len(limits) < min([self.limit, *limits]):
-                    self.path = self.root / ("slot-" + uuid.uuid4().hex + ".lock")
+                    self.path = self.root / f"slot-{int(self.limit)}-{uuid.uuid4().hex}.lock"
                     self.file = self.path.open("x+")
-                    fcntl.flock(self.file, fcntl.LOCK_EX)
+                    lock_file(self.file, block=True)
                     json.dump({"limit": self.limit}, self.file)
                     self.file.flush()
                     return

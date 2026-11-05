@@ -146,9 +146,9 @@ class Assets:
             if not script.is_file() or script.suffix != ".py":
                 raise ValueError("Blender requires an existing relative .py source")
             if self.config.get("runtime", {}).get("mode") == "docker" and self.config["backend"] != "mock":
-                from .runtime import run_blender, runtime_identity
+                from .runtime import run_blender, runtime_identity, same_runtime
                 identity = runtime_identity(self.config)
-                if "runtime" in state and state["runtime"] != identity:
+                if "runtime" in state and not same_runtime(state["runtime"], identity):
                     raise ValueError("Blender runtime changed during resume; use a new asset job")
                 state.update(status="running", runtime=identity)
                 atomic_json(state_path, state)

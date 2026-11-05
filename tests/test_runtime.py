@@ -39,6 +39,7 @@ def test_config_defaults_opt_in_and_factory(tmp_path, runtime_config):
     atomic_json(path, {"engine": "godot", "brief": "fixture"})
     config = load_config(path)
     assert config["runtime"]["mode"] == "local"
+    assert config["runtime"]["cli"] == "docker"
     assert type(make_game(config, tmp_path, tmp_path / "old", lambda: None)) is GodotGame
     atomic_json(path, {"engine": "godot", "brief": "fixture", "runtime": {"mode": "docker"}})
     config = load_config(path)
@@ -48,7 +49,8 @@ def test_config_defaults_opt_in_and_factory(tmp_path, runtime_config):
     config["backend"] = "mock"
     assert isinstance(make_game(config, tmp_path, tmp_path / "mock", lambda: None), MockGame)
     for bad in ({"mode": "invalid"}, {"mode": "docker", "health_timeout_seconds": 0}, {"secret": "x"},
-                {"render_threads": 0}, {"render_threads": -1}, {"render_threads": 1.5}, {"render_threads": True}):
+                {"render_threads": 0}, {"render_threads": -1}, {"render_threads": 1.5}, {"render_threads": True},
+                {"cli": "podman"}):
         atomic_json(path, {"engine": "godot", "brief": "fixture", "runtime": bad})
         with pytest.raises(ValidationError):
             load_config(path)
@@ -118,8 +120,9 @@ def test_cleanup_checks_label_before_stopping(tmp_path, monkeypatch):
 
 
 def transport(game, script):
+    from game_agent_lite.host import popen_kwargs
     game.process = subprocess.Popen([sys.executable, "-u", "-c", script], stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen_kwargs())
     return game.process
 
 

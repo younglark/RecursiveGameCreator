@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from copy import deepcopy
 import csv
 from datetime import datetime
-import fcntl
 import hashlib
 import json
 import os
@@ -18,6 +17,8 @@ import sys
 import tempfile
 import time
 
+from game_agent_lite.containers import container_cli
+from game_agent_lite.host import WINDOWS, lock_file, popen_kwargs, terminate, unlock_file
 from game_agent_lite.paths import load_saved_config, portable_config
 from game_agent_lite.cli import load_config
 from game_agent_lite.store import Store, atomic_json, file_hash, read_json, redact, safe_path, version
@@ -171,12 +172,12 @@ def load_manifest(batch):
 def active(path):
     if not path.exists():
         return False
-    with path.open("r") as stream:
+    with path.open("a+") as stream:
         try:
-            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(stream)
         except BlockingIOError:
             return True
-        fcntl.flock(stream, fcntl.LOCK_UN)
+        unlock_file(stream)
     return False
 
 
@@ -184,11 +185,11 @@ def active(path):
 def task_lock(path):
     # Pass the lease to children: a killed controller must not allow a second evaluator.
     with path.open("a+") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_file(stream, block=True)
         try:
-            yield stream.fileno()
+            # POSIX passes the fd so a killed parent does not drop the lease while the child lives.
+            yield None if WINDOWS else stream.fileno()
         finally:
-            # Closing, rather than explicitly unlocking, preserves a surviving child's lease.
             pass
 
 
@@ -323,12 +324,21 @@ def preflight(batch, manifest, *, docker=False):
     for cfg in configs:
         if not Path(cfg["auth_file"]).is_file() or not Path(cfg["assets"]["env_file"]).is_file():
             raise ValueError("Codex 认证文件或混元 env 文件缺失")
-        if not shutil.which(cfg["harbor"]):
+        if container_cli(cfg) == "docker" and not shutil.which(cfg["harbor"]):
             raise ValueError("找不到 Harbor；请检查 PATH")
-    names = {manifest["image"]} | {c["harbor_image"] for c in configs} | {c["runtime"]["image"] for c in configs}
+    names = {}
+    for cfg in configs:
+        cli = container_cli(cfg)
+        for name in (cfg["harbor_image"], cfg["runtime"]["image"]):
+            names.setdefault(name, cli)
+    names.setdefault(manifest["image"], container_cli(configs[0]))
     images = {}
     for name in sorted(names):
-        value = json.loads(subprocess.check_output(["docker", "image", "inspect", name], text=True))[0]
+        cli = names[name]
+        args = [cli, "image", "inspect", name]
+        if cli == "wslc":
+            args += ["-f", "json"]
+        value = json.loads(subprocess.check_output(args, text=True))[0]
         images[name] = {"id": value["Id"], "architecture": value["Architecture"], "os": value["Os"]}
     target = batch / "environment.json"
     if target.exists() and read_json(target)["images"] != images:
@@ -341,8 +351,11 @@ def launch(command, *, cwd, log, batch, run, lease, generation=False, env=None):
     """Stream logs and watch STOP without an arbitrary model/experiment time limit."""
     with log.open("a") as output, log.open("r") as reader:
         reader.seek(0, os.SEEK_END)
+        extra = popen_kwargs()
+        if lease is not None and not WINDOWS:
+            extra["pass_fds"] = (lease,)
         with subprocess.Popen(command, cwd=cwd, stdout=output, stderr=subprocess.STDOUT,
-                              env=env, start_new_session=True, pass_fds=(lease,)) as process:
+                              env=env, **extra) as process:
             interrupted = False
             while process.poll() is None:
                 if (batch / "STOP").exists() and not interrupted:
@@ -351,7 +364,10 @@ def launch(command, *, cwd, log, batch, run, lease, generation=False, env=None):
                         # The CLI checks this after creating the run as well, avoiding an early-signal race.
                         print("停止请求已收到，等待当前生成保存状态。", flush=True)
                     else:
-                        os.killpg(process.pid, signal.SIGTERM)
+                        if WINDOWS:
+                            terminate(process)
+                        else:
+                            os.killpg(process.pid, signal.SIGTERM)
                 if interrupted and generation and (run / "state.json").exists():
                     Store(run).request_stop()
                 for line in reader:

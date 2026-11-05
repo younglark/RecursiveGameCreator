@@ -358,8 +358,9 @@ class GodotGame(Engine):
                 "--resolution", f"{viewport[0]}x{viewport[1]}"]
         if getattr(self, "policy_scenario", None):
             argv += ["--", "--scenario", self.policy_scenario]
+        from .host import popen_kwargs
         self.process = subprocess.Popen(argv, cwd=self.runtime_project, env=env, stdin=subprocess.DEVNULL,
-            stdout=self.log, stderr=subprocess.STDOUT, start_new_session=True)
+            stdout=self.log, stderr=subprocess.STDOUT, **popen_kwargs())
         until = time.monotonic() + 20  # Startup health check, not a rollout time limit.
         while True:
             self.check_stop()

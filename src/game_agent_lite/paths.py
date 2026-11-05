@@ -21,7 +21,7 @@ def resolve_paths(config, base):
     if result.get("benchmark"):
         result["benchmark"]["path"] = resolve(result["benchmark"]["path"])
     for name in TOOLS:
-        if "/" in result.get(name, ""):
+        if "/" in result.get(name, "") or "\\" in result.get(name, ""):
             result[name] = resolve(result[name])
     return result
 
@@ -32,7 +32,13 @@ def portable_config(config, base):
     base = Path(base).resolve()
     def relative(value):
         path = Path(value).expanduser()
-        return os.path.relpath(path, base) if path.is_absolute() else value
+        if not path.is_absolute():
+            return value
+        try:
+            return os.path.relpath(path, base)
+        except ValueError:
+            # Windows relpath cannot cross drive letters. Keep the absolute path.
+            return str(path)
     for name in ("source", "auth_file", "grok_auth_file"):
         if result.get(name):
             result[name] = relative(result[name])
@@ -46,7 +52,7 @@ def portable_config(config, base):
     if result.get("benchmark"):
         result["benchmark"]["path"] = relative(result["benchmark"]["path"])
     for name in TOOLS:
-        if "/" in result.get(name, ""):
+        if "/" in result.get(name, "") or "\\" in result.get(name, ""):
             result[name] = relative(result[name])
     return result
 

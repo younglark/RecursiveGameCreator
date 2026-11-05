@@ -406,7 +406,8 @@ def export_gamecraft(run_dir: Path, output: Path, *, round_number=None, episodes
     if requested_output.exists() or requested_output.is_symlink():
         raise FileExistsError("Export output already exists; choose a new directory")
     output = requested_output.resolve()
-    if output.is_relative_to(root) or root.is_relative_to(output):
+    from .host import path_inside
+    if path_inside(output, root) or path_inside(root, output):
         raise ValueError("Export output must be outside the run directory")
     preparation, prepared_root, preparation_path = None, None, None
     if prepared_dir is not None:
@@ -415,7 +416,7 @@ def export_gamecraft(run_dir: Path, output: Path, *, round_number=None, episodes
         preparation = read_json(preparation_path)
         if not isinstance(preparation, dict):
             raise ValueError("Invalid preparation metadata")
-        if output.is_relative_to(prepared_root / "player"):
+        if path_inside(output, prepared_root / "player"):
             raise ValueError("Export output must be outside the prepared Player evidence directory")
         if round_number is None:
             round_number = preparation.get("round")
@@ -483,7 +484,8 @@ def export_recorded_report(source, report_path, output, *, expected, round_numbe
     source, report_path, output = Path(source).resolve(), Path(report_path).resolve(), Path(output).absolute()
     if output.exists() or output.is_symlink():
         raise FileExistsError("Export output already exists")
-    if output.resolve().is_relative_to(source) or source.is_relative_to(output.resolve()):
+    from .host import path_inside
+    if path_inside(output.resolve(), source) or path_inside(source, output.resolve()):
         raise ValueError("Export output must be outside the game project")
     if version(source) != expected or not (source / "project.godot").is_file():
         raise ValueError("Game source changed before export")

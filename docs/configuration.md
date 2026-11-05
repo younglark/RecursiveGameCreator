@@ -47,6 +47,7 @@ cp examples/godot.json examples/godot.local.json
 | `seed` | `42`；实际重置语义由游戏实现 |
 | `headless` | `true`，仅控制 HTML；Godot 试玩需要图形渲染 |
 | `runtime.mode` | `local`；`docker` 将 HTML/Godot 构建试玩、Blender 与媒体处理放入统一运行镜像 |
+| `runtime.cli` | `docker`。`wslc` 在 Windows 上用 WSLC 直接启动容器，不调用 Harbor 或 Compose。缺省不按操作系统改写 |
 | `runtime.build_network` | `none`；显式 `bridge` 仅允许构建阶段联网，试玩/Blender/媒体始终禁网 |
 | `runtime.image` | `rsi-gamecreator/runtime:full-v1`，先手动构建 |
 | `runtime.health_timeout_seconds` | `30`，worker 无心跳超时，非总时限 |

@@ -16,6 +16,7 @@ def events(store):
     return [json.loads(line) for line in (store.root / "events.jsonl").read_text().splitlines()]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="time.tzset is POSIX-only")
 def test_timestamp_timezone_legacy_events_and_console_redaction(tmp_path, config, monkeypatch, capsys):
     store = Store(tmp_path / "run")
     store.create(config)

@@ -4,11 +4,14 @@ import json
 import os
 from pathlib import Path
 import queue
-import signal
+import shutil
 import subprocess
 import threading
 import tempfile
+import uuid
 
+from .containers import codex_exec, container_cli, is_missing, run_argv, validated_image
+from .host import WINDOWS, child_env, popen, terminate
 from .store import atomic_json, file_paths, read_json, redact
 from .types import role_schema, validate
 from .usage import capture
@@ -27,31 +30,13 @@ def _result_event(line):
     return None
 
 
-def child_env() -> dict[str, str]:
-    allowed = {"PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "SHELL", "LANG", "LC_ALL",
-               "LC_CTYPE", "DISPLAY", "XDG_RUNTIME_DIR", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-               "LIBGL_ALWAYS_SOFTWARE", "LP_NUM_THREADS", "DOCKER_HOST", "DOCKER_CONTEXT",
-               "DOCKER_CONFIG", "SYSTEMROOT"}
-    return {k: v for k, v in os.environ.items() if k in allowed}
-
-
-def terminate(process):
-    # The parent can exit while a grandchild still owns stdout or keeps running.
-    # A dedicated process group belongs to this invocation even in that case.
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    try:
-        process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        pass
-    finally:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
+def install_auth(home: Path, auth: Path):
+    """CODEX_HOME/auth.json. Windows copies the file; POSIX keeps a symlink."""
+    target = Path(home) / "auth.json"
+    if WINDOWS:
+        shutil.copyfile(auth, target)
+    else:
+        target.symlink_to(auth.resolve())
 
 
 class CommandRunner:
@@ -63,10 +48,9 @@ class CommandRunner:
         is not a parse source for role output.
         """
         log.parent.mkdir(parents=True, exist_ok=True)
-        process = subprocess.Popen([str(a) for a in argv], cwd=cwd, env=env or child_env(),
-                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, text=True, errors="replace",
-                                   start_new_session=True)
+        process = popen([str(a) for a in argv], cwd=cwd, env=env or child_env(),
+                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, text=True, errors="replace")
         lines: queue.Queue = queue.Queue(maxsize=256)
         finished = threading.Event()
 
@@ -144,9 +128,9 @@ class Agent:
         remote = self.config["backend"] == "harbor"
         io_path = "/workspace/io" if remote else str(io.resolve())
         project_path = "/workspace/project" if remote else str(project.resolve()) if project else None
-        prompt = (PACKAGE / "prompts" / f"{role}.md").read_text()
+        prompt = (PACKAGE / "prompts" / f"{role}.md").read_text(encoding="utf-8")
         if role == "player" and (context.get("benchmark") or {}).get("name") == "gamecraft":
-            prompt += "\n\n" + (PACKAGE / "prompts/player_gamecraft.md").read_text()
+            prompt += "\n\n" + (PACKAGE / "prompts/player_gamecraft.md").read_text(encoding="utf-8")
         prompt += (f"\nRead {io_path}/input.json and {io_path}/schema.json. "
                    f"Your shared directory is {io_path}. "
                    "Return only the final JSON matching the schema.\n")
@@ -157,7 +141,9 @@ class Agent:
         else:
             atomic_json(job / "request.json", {"role": role, "model": self.config["model"],
                                               "prompt": prompt, "usage": None})
-            if remote:
+            if remote and container_cli(self.config) == "wslc":
+                self.run_wslc_role(role, job, io, prompt, project, tick)
+            elif remote:
                 argv, env = self.harbor_command(job, prompt, project, role)
                 try:
                     self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
@@ -165,22 +151,19 @@ class Agent:
                     self.cleanup_harbor(job / "harbor-owner.json")
                 self.check_harbor(job / "jobs")
             else:
-                argv = [self.config["codex"], "exec", "--json", "--ephemeral",
-                        "--skip-git-repo-check", "--model", self.config["model"],
-                        "-c", f'model_reasoning_effort="{self.config["reasoning"]}"',
-                        "--sandbox", "workspace-write", "--cd", str(io.resolve()),
-                        "--output-schema", str((io / "schema.json").resolve()),
-                        "--output-last-message", str((io / "result.json").resolve())]
-                if project is not None and role == "builder":
-                    argv += ["--add-dir", str(project.resolve())]
-                argv += [prompt]
+                argv = codex_exec(
+                    self.config["codex"], self.config, cd=str(io.resolve()),
+                    schema=str((io / "schema.json").resolve()),
+                    result=str((io / "result.json").resolve()),
+                    add_dir=str(project.resolve()) if project is not None and role == "builder" else None,
+                    prompt=prompt, sandbox="workspace-write")
                 env = child_env()
                 auth = Path(self.config["auth_file"]).expanduser()
                 if not auth.is_file():
                     raise ValueError("Local Codex login file is missing; run codex login first")
                 # Use the selected saved login without importing arbitrary user MCPs or API keys.
                 with tempfile.TemporaryDirectory(prefix="game-agent-codex-") as home:
-                    (Path(home) / "auth.json").symlink_to(auth.resolve())
+                    install_auth(home, auth)
                     env["CODEX_HOME"] = home
                     self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
         value = validate(read_json(io / "result.json"), schema)
@@ -248,7 +231,7 @@ class Agent:
             auth = Path(self.config["grok_auth_file"]).expanduser()
             if not auth.is_file():
                 raise ValueError("Grok login is missing; run grok login or set XAI_API_KEY")
-            (home / "auth.json").symlink_to(auth.resolve())
+            install_auth(home, auth)
         argv = [self.config["grok"], "--prompt-file", str(prompt_path.resolve()),
                 "--output-format", "streaming-messages-json",
                 "--json-schema", json.dumps(schema, separators=(",", ":"), ensure_ascii=False),
@@ -274,6 +257,55 @@ class Agent:
             raise RuntimeError("Grok finished without structured output; see process.log")
         # Keep the model object intact. process.log is redacted and is not this source.
         atomic_json(job / "io" / "result.json", structured, private=True)
+
+    def run_wslc_role(self, role, job, io, prompt, project, tick):
+        """One role container. WSLC has no Compose, so Harbor is not involved."""
+        config = self.config
+        auth = Path(config["auth_file"]).expanduser()
+        if not auth.is_file():
+            raise ValueError("Local Codex login file is missing; run codex login first")
+        try:
+            image = validated_image("wslc", config["harbor_image"])
+        except (RuntimeError, ValueError) as exc:
+            raise RuntimeError("Role image is unavailable; build it with wslc before this run. "
+                               + redact(str(exc))) from exc
+        image_id = image["Id"]
+        version = subprocess.run(
+            ["wslc", "run", "--rm", "--pull=never", "--network", "none", "--entrypoint", "codex",
+             image_id, "--version"],
+            capture_output=True, text=True, timeout=120, env=child_env())
+        reported = ((version.stdout or "") + (version.stderr or "")).strip()
+        if version.returncode or f"codex-cli {config['codex_version']}" not in reported:
+            raise RuntimeError("Preinstalled Codex version differs from configured version: " + reported[:500])
+        token = uuid.uuid4().hex
+        atomic_json(job / "harbor-owner.json", {"label": token, "active": True, "cli": "wslc"})
+        home = job / ".codex-home"
+        if home.exists():
+            shutil.rmtree(home)
+        home.mkdir()
+        shutil.copyfile(auth, home / "auth.json")
+        # The directory holds a copy of auth.json. Codex also creates its state
+        # database here, so the mount itself has to be writable.
+        mounts = [(io.resolve(), "/workspace/io", False), (home.resolve(), "/codex-home", False)]
+        add_dir = None
+        if project is not None:
+            mounts.append((project.resolve(), "/workspace/project", role != "builder"))
+            if role == "builder":
+                add_dir = "/workspace/project"
+        command = codex_exec(
+            "codex", config, cd="/workspace/io", schema="/workspace/io/schema.json",
+            result="/workspace/io/result.json", add_dir=add_dir, prompt=prompt,
+            sandbox="danger-full-access")[1:]
+        argv = run_argv(
+            "wslc", name="rsi-role-" + token[:12], label="game-agent-lite.job=" + token,
+            network=None, user="runner", shm=None, tmpfs=None, workdir="/workspace/io",
+            interactive=False, read_only_root=False, mounts=mounts, envs=["CODEX_HOME=/codex-home"],
+            entrypoint="codex", image=image_id, command=command)
+        try:
+            self.runner.run(argv, io, job / "process.log", env=child_env(), tick=tick)
+        finally:
+            self.cleanup_harbor(job / "harbor-owner.json")
+            shutil.rmtree(home, ignore_errors=True)
 
     def harbor_command(self, job: Path, prompt: str, project: Path | None, role: str):
         config = self.config
@@ -327,11 +359,15 @@ class Agent:
         if not owner.get("active"):
             return
         # A label unique to the role is required; never stop unrelated Docker work.
-        result = subprocess.run(["docker", "ps", "-aq", "--filter", "label=game-agent-lite.job=" + owner["label"]],
+        cli = owner.get("cli", "docker")
+        result = subprocess.run([cli, "ps", "-aq", "--filter", "label=game-agent-lite.job=" + owner["label"]],
             capture_output=True, text=True, check=True, timeout=15, env=child_env())
         ids = result.stdout.split()
         if ids:
-            subprocess.run(["docker", "rm", "-f", *ids], capture_output=True, check=True, timeout=15, env=child_env())
+            removed = subprocess.run([cli, "rm", "-f", *ids], capture_output=True, text=True,
+                                     timeout=15, env=child_env())
+            if removed.returncode and not is_missing(removed):
+                removed.check_returncode()
         atomic_json(marker, {**owner, "active": False})
 
     @staticmethod

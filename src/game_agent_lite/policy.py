@@ -22,6 +22,9 @@ import warnings
 from jsonschema import ValidationError
 
 from .agent import Agent, CommandRunner, child_env, terminate
+from .containers import container_cli, is_missing, run_argv
+from .host import WINDOWS, exchange_windows, path_inside, popen_kwargs, remove_tree
+from .runtime import same_runtime, same_settings
 from .store import copy_file
 from .store import (Stopped, artifact, atomic_json, file_hash, read_json, redact, safe_path,
                     inventory, snapshot, version, verify_artifact)
@@ -45,18 +48,19 @@ class PolicyWorker:
             argv = [sys.executable, "-I", "-S", "-u", str(worker), str(policy)]
         else:
             self.container = "rsi-policy-" + uuid.uuid4().hex
-            atomic_json(output / "worker.json", {"container": self.container})
-            argv = ["docker", "run", "--rm", "--pull=never", "--init", "-i",
-                    "--name", self.container, "--network", "none", "--read-only",
-                    "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-                    "--user", "65534:65534", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-                    "--mount", f"type=bind,source={policy.resolve()},target=/policy/policy.py,readonly",
-                    "--mount", f"type=bind,source={worker.resolve()},target=/policy/worker.py,readonly",
-                    "--workdir", "/tmp", "--entrypoint", "python3", config["harbor_image"],
-                    "-I", "-S", "-u", "/policy/worker.py", "/policy/policy.py"]
+            cli = container_cli(config)
+            atomic_json(output / "worker.json", {"container": self.container, "cli": cli})
+            argv = run_argv(
+                cli, name=self.container, label=None, network="none", user="65534:65534", shm=None,
+                tmpfs="/tmp:rw,noexec,nosuid,size=64m", workdir="/tmp", interactive=True,
+                read_only_root=True,
+                mounts=[(policy.resolve(), "/policy/policy.py", True),
+                        (worker.resolve(), "/policy/worker.py", True)],
+                envs=[], entrypoint="python3", image=config["harbor_image"],
+                command=["-I", "-S", "-u", "/policy/worker.py", "/policy/policy.py"])
         # Child stderr is streamed and redacted by the parent along with stdout.
         self.process = subprocess.Popen(argv, cwd=output, env=child_env(), stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen_kwargs())
         self.stderr_open = True
 
     @staticmethod
@@ -65,15 +69,18 @@ class PolicyWorker:
             name = read_json(marker).get("container", "")
             if not re.fullmatch(r"rsi-policy-[0-9a-f]{32}", name):
                 raise ValueError("Invalid policy container ownership marker")
-            result = subprocess.run(["docker", "rm", "-f", name], capture_output=True,
+            cli = read_json(marker).get("cli", "docker")
+            result = subprocess.run([cli, "rm", "-f", name], capture_output=True,
                                     text=True, timeout=15, env=child_env())
-            if result.returncode and "No such container" not in result.stderr:
+            if result.returncode and not is_missing(result):
                 raise RuntimeError("Cannot clean up policy container: " + redact(result.stderr))
             marker.unlink()
 
     def request(self, method, **params):
         self.check_stop()
         payload = json.dumps({"method": method, **params}, allow_nan=False).encode() + b"\n"
+        if WINDOWS:
+            return self._request_windows(method, payload)
         # Nonblocking writes keep cancellation/timeout working even with a stuck policy.
         os.set_blocking(self.process.stdin.fileno(), False)
         until = time.monotonic() + self.timeout
@@ -109,6 +116,26 @@ class PolicyWorker:
                     if reply.get("error"):
                         raise ValueError("Policy failed: " + redact(str(reply["error"])))
                     return reply["result"]
+
+    def _request_windows(self, method, payload):
+        if not isinstance(getattr(self, "_win_buffer", None), bytearray):
+            self._win_buffer = bytearray()
+        message = f"Policy {method} exceeded per-call health timeout ({self.timeout}s)"
+
+        def on_line(line):
+            reply = json.loads(line)
+            if reply.get("error"):
+                raise ValueError("Policy failed: " + redact(str(reply["error"])))
+            return "done", reply["result"]
+
+        with (self.output / "worker.log").open("a") as log:
+            return exchange_windows(
+                self.process, payload, buffer=self._win_buffer, timeout=self.timeout,
+                check_stop=self.check_stop, log=log, redact=redact, max_bytes=1024 * 1024,
+                interruptible=True, on_line=on_line,
+                eof_error="Policy worker exited; see worker.log",
+                limit_error="Policy response exceeds transport size limit",
+                timeout_error=message)
 
     def close(self):
         try:
@@ -218,7 +245,7 @@ class PolicySession:
         receipt = root / "result.json"
         if receipt.exists():
             result = read_json(receipt)
-            if result["version"] != self.version or result["settings"] != self.settings:
+            if result["version"] != self.version or not same_settings(result["settings"], self.settings):
                 raise ValueError("Preflight version/settings changed; use a new Player session")
             if result["status"] == "interrupted":
                 archived = self.job / ("preflight-interrupted-" + uuid.uuid4().hex[:8])
@@ -377,7 +404,7 @@ class PolicySession:
         saved = self.job / "policy.json"
         if saved.exists():
             result = read_json(saved)
-            if (result["version"] != self.version or result.get("settings") != self.settings
+            if (result["version"] != self.version or not same_settings(result.get("settings"), self.settings)
                     or not verify_artifact(result["policy"], self.job)
                     or not verify_artifact(result["plan"], self.job)):
                 raise ValueError("Saved Player policy/plan changed; refusing silent regeneration")
@@ -386,7 +413,7 @@ class PolicySession:
         preflight = self.preflight()
         preparation, prepared = self.prepare()
         parent = prepared["parent"]
-        if (parent and parent["version"] == self.version and parent["settings"] == self.settings
+        if (parent and parent["version"] == self.version and same_settings(parent["settings"], self.settings)
                 and parent["context"] is not None and parent["context"] == prepared["context"]
                 and (not self.benchmark or "coverage" in read_json(safe_path(self.job, parent["plan"]["path"])))):
             # Reuse code, not episodes: a new job still executes all configured games.
@@ -459,7 +486,7 @@ class PolicySession:
                 raise ValueError("Completed policy episode receipt changed")
             result = read_json(safe_path(self.job, item["path"]))
             if (not _episode_intact(result, self.job, self.version, policy["sha256"])
-                    or result.get("runtime") != self.settings.get("runtime")):
+                    or not same_runtime(result.get("runtime"), self.settings.get("runtime"))):
                 raise ValueError("Completed policy episode evidence changed")
             return item
         recorded = directory / "recorded.json"
@@ -469,7 +496,7 @@ class PolicySession:
                 raise ValueError("Recorded policy episode changed")
             result = read_json(safe_path(self.job, saved["path"]))
             if (not _episode_intact(result, self.job, self.version, policy["sha256"])
-                    or result.get("runtime") != self.settings.get("runtime")):
+                    or not same_runtime(result.get("runtime"), self.settings.get("runtime"))):
                 raise ValueError("Recorded policy episode evidence changed")
             return self.finish_episode(directory, safe_path(self.job, saved["path"]).parent, result)
         attempt = directory / ("attempt-" + uuid.uuid4().hex[:10])
@@ -712,10 +739,10 @@ class PolicySession:
             paths += list(episode.glob("engine/project"))
         removed, warnings = [], []
         for path in paths:
-            if path.is_symlink() or not path.resolve().is_relative_to(self.job.resolve()):
+            if path.is_symlink() or not path_inside(path.resolve(), self.job.resolve()):
                 continue
             try:
-                shutil.rmtree(path)
+                remove_tree(path)
                 removed.append(path.relative_to(self.job).as_posix())
             except OSError:
                 warnings.append(path.relative_to(self.job).as_posix())
@@ -769,14 +796,19 @@ def _relative_analysis(value, io, paths):
     """Repair only unambiguous legacy citations to known files; keep raw output."""
     if not isinstance(value, dict) or not isinstance(value.get("evidence"), list):
         raise ValueError("Player analysis must contain an evidence array")
-    aliases = {alias: path for path in paths for alias in
-               (path, "/workspace/io/" + path, str(io.resolve() / path))}
+    def _key(text):
+        return text.replace("\\", "/")
+    aliases = {}
+    for path in paths:
+        absolute = (io.resolve() / path).as_posix()
+        for alias in (path, "/workspace/io/" + path, absolute):
+            aliases[_key(alias)] = path
     citations = []
     for citation in value["evidence"]:
         if not isinstance(citation, str):
             raise ValueError("Player evidence must contain file paths")
         parts = re.split(r"：|:\s", citation.strip(), maxsplit=1)
-        path = aliases.get(parts[0])
+        path = aliases.get(_key(parts[0]))
         if path is None or (len(parts) == 2 and "evidence/" in parts[1]):
             raise ValueError("Player cited unavailable or ambiguous evidence; use one relative path per item")
         citations.append(path)
@@ -891,7 +923,7 @@ def valid_policy_play(report, root, expected_version, *, allow_mock=False):
             from .gamecraft import _demo_time_limit
             deadline_stop = bool(benchmark) and _demo_time_limit(episode, report["settings"])
             if (not _episode_intact(episode, root, expected_version, report["policy"]["sha256"])
-                    or episode.get("runtime") != report["settings"].get("runtime")
+                    or not same_runtime(episode.get("runtime"), report["settings"].get("runtime"))
                     or episode["index"] != index or (episode["status"] != "completed" and not deadline_stop)
                     or episode["profile"] != plan["episodes"][index]["profile"]
                     or episode["purpose"] != plan["episodes"][index]["purpose"]

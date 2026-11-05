@@ -205,8 +205,9 @@ def test_launch_uses_argument_list_and_separate_logs(prepared, monkeypatch):
     assert argv[4:] == ["start", str(root / "configs/alpha-game.json"),
                         "--run-dir", str(root / "runs/alpha-game")]
     assert not kwargs.get("shell")
+    from game_agent_lite.host import popen_kwargs
     assert kwargs["stdin"] == subprocess.DEVNULL
-    assert kwargs["start_new_session"] is True
+    assert all(kwargs.get(key) == value for key, value in popen_kwargs().items())
 
 
 def test_real_cli_mock_batch_stops_after_round2_and_skips_finished(prepared, monkeypatch):

@@ -15,7 +15,15 @@ docker compose version
 docker buildx version
 ```
 
-The runtime uses Linux containers, virtual displays, and software rendering; no host GPU is required. Native Windows and automatic synchronization to a remote Docker host are not supported.
+The runtime uses Linux containers, virtual displays, and software rendering; no host GPU is required. Automatic synchronization to a remote Docker host is not supported.
+
+Windows uses WSLC instead of Docker Desktop. From the repository root:
+
+```powershell
+powershell -File scripts/setup.ps1
+```
+
+The script installs the locked Python environment and builds both images with `wslc build`. It does not install Harbor or a host Node.js. Role calls with `runtime.cli` set to `wslc` run Codex inside the role image. Start from [godot-wslc.json](../examples/godot-wslc.json). WSLC 3.0.3 has no `--read-only`, `--cap-drop`, `--security-opt`, or `--init`, and Codex inside that container uses `danger-full-access` because user namespaces are unavailable. Bind mounts remain read-only when requested. macOS and Linux continue to use `scripts/setup.sh` and Harbor.
 
 ## Installation modes
 

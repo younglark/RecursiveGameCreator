@@ -73,6 +73,8 @@ def test_resume_does_not_repeat_completed_stages(tmp_path, config):
 
 @pytest.mark.parametrize("phase", ["draft", "integrate"])
 def test_resume_reuses_successful_builder_after_host_snapshot_failure(tmp_path, config, phase):
+    from tests.conftest import require_symlinks
+    require_symlinks(tmp_path)
     config["rounds"] = 1
 
     class CreatesSymlink(MockAgent):

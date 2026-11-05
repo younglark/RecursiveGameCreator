@@ -1,0 +1,29 @@
+{
+  "engine": "godot",
+  "brief": "制作一款使用 Compatibility 渲染器的 Godot 3D 游戏，使用 Blender 与生成资产；先形成可玩的核心循环，再改进玩法和美术。",
+  "backend": "harbor",
+  "model": "gpt-6-astra",
+  "rounds": null,
+  "max_actions": null,
+  "godot": "godot",
+  "blender": "blender",
+  "player": {
+    "mode": "policy",
+    "trajectories_per_version": 3,
+    "parallel_episodes": 1
+  },
+  "assets": {
+    "env_file": "../.env.hunyuan",
+    "max_images": null,
+    "max_models": null,
+    "max_blender": null
+  },
+  "runtime": {
+    "mode": "docker",
+    "cli": "wslc",
+    "image": "rsi-gamecreator/runtime:full-v1",
+    "health_timeout_seconds": 30,
+    "render_threads": 4,
+    "build_network": "none"
+  }
+}

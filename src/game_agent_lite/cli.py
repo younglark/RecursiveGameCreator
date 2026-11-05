@@ -9,6 +9,7 @@ import sys
 import uuid
 
 from .loop import Loop
+from .host import path_inside
 from .store import Store, read_json, redact, safe_path
 from .types import CONFIG_SCHEMA, DEFAULTS, validate
 from .usage import refresh as refresh_usage, report_lines as usage_report_lines
@@ -162,7 +163,7 @@ def main(argv=None) -> int:
             if (config.get("benchmark") or {}).get("name") == "gamecraft":
                 root /= "gamecraft"
             store = Store(args.run_dir or root / name)
-            if config["source"] and store.root.is_relative_to(Path(config["source"])):
+            if config["source"] and path_inside(store.root, Path(config["source"])):
                 raise ValueError("Run directory must be outside the source project")
             store.create(config)
             print(f"Run directory: {store.root}")

@@ -345,6 +345,7 @@ def test_all_tasks_cli_dry_run_is_read_only(workspace):
     assert contents(workspace[0]) == before
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX lease fds are not inherited by Windows children")
 def test_launcher_streams_and_child_inherits_task_lease(tmp_path):
     # Only a local two-line Python fixture, not a model/game/evaluator subprocess.
     lease_path = tmp_path / "task.lock"

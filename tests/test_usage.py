@@ -59,6 +59,16 @@ def test_fallback_uses_last_session_snapshot_not_sum(tmp_path):
     assert summary["calls"][0]["call_status"] == "incomplete"
 
 
+def test_harbor_without_trial_directory_uses_process_log(tmp_path):
+    path = job(tmp_path)
+    (path / "process.log").write_text(json.dumps({
+        "type": "turn.completed",
+        "usage": {"input_tokens": 4, "cached_input_tokens": 1, "output_tokens": 2}}) + "\n")
+    tokens, sources = usage.read_tokens(path, "harbor")
+    assert sources == ["process.log"]
+    assert tokens["input_tokens"] == 4 and tokens["output_tokens"] == 2
+
+
 def test_local_turn_usage_sums_turns_and_preserves_known_partial(tmp_path):
     path = job(tmp_path)
     events = [{"type": "turn.completed", "usage": value} for value in (

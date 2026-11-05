@@ -10,6 +10,7 @@ import subprocess
 import sys
 import uuid
 
+from game_agent_lite.containers import inspect_image
 from game_agent_lite.gamecraft import validate_gamecraft_submission
 from game_agent_lite.gamecraft_recordings import validate_recordings
 
@@ -32,6 +33,7 @@ def main(argv=None):
     parser.add_argument("--image", help="Override the recorded replay image; legacy projects use the standard scoring image")
     parser.add_argument("--judge-max-tokens", type=int,
                         help="OpenAI judge output budget for this run only; omitted = upstream default (2048)")
+    parser.add_argument("--cli", choices=("docker", "wslc"), default="docker")
     parser.add_argument("--smoke-test", action="store_true", help="Check the selected evidence pipeline with a stub judge and Docker --network none; not a real score")
     parser.add_argument("--dry-run", action="store_true", help="Validate project/submission and print the plan without launching Docker or making files")
     args = parser.parse_args(argv)
@@ -78,7 +80,10 @@ def main(argv=None):
         parser.error("Create .env.gamecraft from docker/gamecraft/judge.env.example and fill in the judge API key")
 
     name = f"gamecraft-eval-{uuid.uuid4().hex[:12]}"
-    command = ["docker", "run", "--rm", "--init", "--name", name, "--shm-size", "1g",
+    command = [args.cli, "run", "--rm"]
+    if args.cli == "docker":
+        command.append("--init")
+    command += ["--name", name, "--shm-size", "1g",
                "--mount", f"type=bind,source={project},target=/submission,readonly",
                "--mount", f"type=bind,source={benchmark},target=/opt/gamecraft-bench,readonly",
                "--mount", f"type=bind,source={output},target=/output"]
@@ -126,9 +131,7 @@ def main(argv=None):
         print(json.dumps({"dry_run": True, "command": command, "submission": provenance}, ensure_ascii=False, indent=2))
         return 0
 
-    image_info = json.loads(subprocess.check_output([
-        "docker", "image", "inspect", args.image, "--format", '{{json .}}'
-    ], text=True))
+    image_info = inspect_image(args.cli, args.image)
     commit = subprocess.run(["git", "-C", str(benchmark), "rev-parse", "HEAD"], capture_output=True, text=True)
     hashes = {str(p.relative_to(benchmark)): hashlib.sha256(p.read_bytes()).hexdigest()
               for p in sorted((benchmark / "gamecraft_bench").rglob("*.py"))}
@@ -161,7 +164,7 @@ def main(argv=None):
         result = subprocess.run(command)
         return result.returncode
     except KeyboardInterrupt:
-        subprocess.run(["docker", "stop", "--time", "5", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([args.cli, "stop", "--time", "5", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return 130
 
 

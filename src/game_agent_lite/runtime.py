@@ -10,7 +10,9 @@ import time
 import uuid
 
 from .agent import child_env, terminate
+from .containers import capture, container_cli, game_user, is_missing, run_argv
 from .game import Engine, GodotGame, HTMLGame
+from .host import WINDOWS, exchange_windows, popen_kwargs
 from .store import atomic_json, read_json, redact, safe_path, version
 from .types import DEFAULTS
 
@@ -28,19 +30,29 @@ def _docker(args):
                           timeout=30, env=child_env())
 
 
+def _invoke(cli, args):
+    if cli == "docker":
+        return _docker(args)
+    return capture(cli, args)
+
+
 def runtime_identity(config):
     """Resolve mutable tags before a batch and pin runs to the inspected image ID."""
     if config["backend"] == "mock" or options(config)["mode"] != "docker":
         return None
+    cli = container_cli(config)
     image = options(config)["image"]
-    result = _docker(["image", "inspect", image])
+    args = ["image", "inspect", image]
+    if cli == "wslc":
+        args += ["-f", "json"]
+    result = _invoke(cli, args)
     if result.returncode:
         raise RuntimeError("Runtime image is unavailable; build docker/runtime.Dockerfile first. "
                            "No automatic pull or desktop fallback. " + redact(result.stderr))
     data = json.loads(result.stdout)[0]
     if data["Os"] != "linux" or not re.fullmatch(r"sha256:[a-f0-9]{64}", data["Id"]):
         raise ValueError("Runtime image must be a Linux image with a content-addressed ID")
-    identity = {"mode": "docker", "protocol": PROTOCOL, "image_id": data["Id"],
+    identity = {"mode": "docker", "cli": cli, "protocol": PROTOCOL, "image_id": data["Id"],
             "os": data["Os"], "architecture": data["Architecture"],
             "framework_sha256": version(PACKAGE),
             "renderer": "mesa-software" if config["engine"] == "godot" else "chromium"}
@@ -49,29 +61,52 @@ def runtime_identity(config):
     return identity
 
 
+def same_runtime(saved, current):
+    """Older receipts omit cli. That means the Docker CLI, not a different engine."""
+    if not isinstance(saved, dict) or not isinstance(current, dict):
+        return saved == current
+    left, right = dict(saved), dict(current)
+    left.setdefault("cli", "docker")
+    right.setdefault("cli", "docker")
+    return left == right
+
+
+def same_settings(saved, current):
+    if not isinstance(saved, dict) or not isinstance(current, dict):
+        return saved == current
+    if "runtime" in saved or "runtime" in current:
+        if not same_runtime(saved.get("runtime"), current.get("runtime")):
+            return False
+        saved = {key: value for key, value in saved.items() if key != "runtime"}
+        current = {key: value for key, value in current.items() if key != "runtime"}
+    return saved == current
+
+
 def cleanup_owner(marker: Path, *, graceful=False):
     """Only remove a container whose unpredictable ownership label still matches."""
     if not marker.exists():
         return
     owner = read_json(marker)
     name, token = owner.get("container", ""), owner.get("owner", "")
+    cli = owner.get("cli", "docker")
     if not re.fullmatch(r"rsi-game-[a-f0-9]{32}", name) or not re.fullmatch(r"[a-f0-9]{32}", token):
         raise ValueError("Invalid runtime container ownership marker")
-    result = _docker(["container", "inspect", name])
+    inspect_args = ["inspect", name, "-f", "json"] if cli == "wslc" else ["container", "inspect", name]
+    result = _invoke(cli, inspect_args)
     if result.returncode:
-        if "No such" not in result.stderr:
+        if not is_missing(result):
             raise RuntimeError("Cannot inspect owned runtime: " + redact(result.stderr))
     else:
         data = json.loads(result.stdout)[0]
         if (data["Config"].get("Labels") or {}).get(OWNER_LABEL) != token:
             raise ValueError("Runtime ownership mismatch; refusing to stop another container")
         if graceful and data["State"]["Running"]:
-            result = _docker(["stop", "--time", "20", name])
-            if result.returncode and "No such" not in result.stderr:
+            result = _invoke(cli, ["stop", "--time", "20", name])
+            if result.returncode and not is_missing(result):
                 raise RuntimeError("Cannot stop owned runtime: " + redact(result.stderr))
         for _ in range(50):
-            result = _docker(["rm", "-f", name])
-            if not result.returncode or "No such" in result.stderr:
+            result = _invoke(cli, ["rm", "-f", name])
+            if not result.returncode or is_missing(result):
                 break
             if "removal" not in result.stderr or "already in progress" not in result.stderr:
                 raise RuntimeError("Cannot clean owned runtime: " + redact(result.stderr))
@@ -104,40 +139,33 @@ class RuntimeContainer(Engine):
 
     def _launch(self, purpose):
         self.check_stop()
-        if os.getuid() == 0:
+        cli = container_cli(self.config)
+        if cli == "docker" and not WINDOWS and os.getuid() == 0:
             raise ValueError("Run the controller as a non-root user for writable runtime bind mounts")
         cleanup_owner(self.owner_file, graceful=True)
         self.identity = runtime_identity(self.config)
         expected = self.config.get("_runtime_identity")
-        if expected is not None and expected != self.identity:
+        if expected is not None and not same_runtime(expected, self.identity):
             raise ValueError("Runtime identity changed during the Player batch")
         network = options(self.config)["build_network"] if purpose == "build" else "none"
         token = uuid.uuid4().hex
         name = "rsi-game-" + uuid.uuid4().hex
         mounts = [(self.project, "/source", purpose != "build"),
                   (self.output, "/output", False), (PACKAGE.resolve(), "/framework/game_agent_lite", True)]
-        if any("," in str(path) for path, _, _ in mounts):
-            raise ValueError("Runtime mount paths cannot contain commas")
-        argv = ["docker", "run", "--rm", "--pull=never", "--init", "-i", "--name", name,
-                "--label", OWNER_LABEL + "=" + token, "--network", network, "--read-only", "--shm-size", "512m",
-                "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-                "--user", f"{os.getuid()}:{os.getgid()}",
-                "--tmpfs", "/tmp:rw,nosuid,nodev", "--workdir", "/output"]
-        for path, target, readonly in mounts:
-            # Docker's --mount CSV cannot represent arbitrary comma-containing paths here.
-            argv += ["--mount", f"type=bind,source={path},target={target}" + (",readonly" if readonly else "")]
-        for value in ("PYTHONPATH=/framework", "PYTHONDONTWRITEBYTECODE=1", "HOME=/output/home",
-                      "XDG_DATA_HOME=/output/user-data", "XDG_CACHE_HOME=/tmp/cache",
-                      "XDG_RUNTIME_DIR=/tmp/xdg-runtime", "LIBGL_ALWAYS_SOFTWARE=1", "DISPLAY=:99"):
-            argv += ["--env", value]
+        envs = ["PYTHONPATH=/framework", "PYTHONDONTWRITEBYTECODE=1", "HOME=/output/home",
+                "XDG_DATA_HOME=/output/user-data", "XDG_CACHE_HOME=/tmp/cache",
+                "XDG_RUNTIME_DIR=/tmp/xdg-runtime", "LIBGL_ALWAYS_SOFTWARE=1", "DISPLAY=:99"]
         if self.config["engine"] == "godot":
-            argv += ["--env", f"LP_NUM_THREADS={options(self.config)['render_threads']}"]
-        argv += ["--entrypoint", "python3", self.identity["image_id"],
-                 "-u", "-m", "game_agent_lite.runtime_worker"]
-        atomic_json(self.owner_file, {"container": name, "owner": token})
+            envs.append(f"LP_NUM_THREADS={options(self.config)['render_threads']}")
+        argv = run_argv(cli, name=name, label=OWNER_LABEL + "=" + token, network=network,
+                        user=game_user(cli), shm="512m", tmpfs="/tmp:rw,nosuid,nodev", workdir="/output",
+                        interactive=True, read_only_root=True, mounts=mounts, envs=envs,
+                        entrypoint="python3", image=self.identity["image_id"],
+                        command=["-u", "-m", "game_agent_lite.runtime_worker"])
+        atomic_json(self.owner_file, {"container": name, "owner": token, "cli": cli})
         try:
             self.process = subprocess.Popen(argv, cwd=self.output, env=child_env(), stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen_kwargs())
             # Pass engine settings only. Credentials, model settings and host tool paths stay outside.
             engine_config = {key: deepcopy(self.config[key]) for key in
                              ("engine", "entry", "build_command", "check_command", "headless")}
@@ -156,6 +184,8 @@ class RuntimeContainer(Engine):
             raise RuntimeError("Runtime transport unavailable; requests are never replayed")
         request_id = uuid.uuid4().hex
         payload = json.dumps({"id": request_id, "method": method, "params": params}, allow_nan=False).encode() + b"\n"
+        if WINDOWS:
+            return self._request_windows(request_id, payload, interruptible=interruptible)
         pending = memoryview(payload)
         os.set_blocking(self.process.stdin.fileno(), False)
         deadline = time.monotonic() + self.timeout
@@ -199,6 +229,31 @@ class RuntimeContainer(Engine):
                         raise RuntimeError("Runtime worker exited; see container.log; action was not retried")
         except BaseException:
             # A lost response is ambiguous: never send another action or assume success.
+            self.broken = True
+            raise
+
+    def _request_windows(self, request_id, payload, *, interruptible):
+        if not isinstance(getattr(self, "_win_buffer", None), bytearray):
+            self._win_buffer = bytearray()
+
+        def on_line(line):
+            reply = json.loads(line)
+            if reply.get("id") != request_id:
+                raise ValueError("Runtime response ID mismatch")
+            if reply.get("heartbeat"):
+                return "heartbeat", None
+            if reply.get("error"):
+                raise RuntimeError("Container engine: " + redact(reply["error"]))
+            return "done", reply["result"]
+
+        try:
+            with (self.output / "container.log").open("a") as log:
+                return exchange_windows(
+                    self.process, payload, buffer=self._win_buffer, timeout=self.timeout,
+                    check_stop=self.check_stop, log=log, redact=redact, max_bytes=10 * 1024 * 1024,
+                    interruptible=interruptible, on_line=on_line,
+                    eof_error="Runtime worker exited; see container.log; action was not retried")
+        except BaseException:
             self.broken = True
             raise
 

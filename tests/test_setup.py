@@ -8,6 +8,9 @@ import sys
 
 import pytest
 
+if sys.platform == "win32":
+    pytest.skip("scripts/setup.sh is the POSIX installer", allow_module_level=True)
+
 
 @pytest.fixture
 def setup_tree(tmp_path):
