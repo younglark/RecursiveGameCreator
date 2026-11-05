@@ -38,7 +38,7 @@ docker build -t game-agent-lite/codex:0.153.4-godot-v1 docker
 | 组件 | 配置 |
 |---|---|
 | Python | 3.12，控制器 worker 使用 |
-| Godot | 4.7.1，官方发行包 SHA-512 校验 |
+| Godot | 4.7.2，官方发行包 SHA-512 校验 |
 | Blender | Debian 13 的 4.3.2，含其 Python 所需 NumPy/Pillow；构建时实际导出 GLB 验证 |
 | Playwright | 1.62.0，与仓库锁文件一致，安装匹配 Chromium 与浏览器系统依赖 |
 | Node.js / npm | Node 22 镜像提供，用于 HTML 构建 |

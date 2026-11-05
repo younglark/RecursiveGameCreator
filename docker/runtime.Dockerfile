@@ -1,6 +1,6 @@
 # Shared environment only. The controller mounts the matching framework read-only.
 FROM python:3.12-slim-bookworm AS godot
-ARG GODOT_VERSION=4.7.1
+ARG GODOT_VERSION=4.7.2
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl unzip xvfb ffmpeg libgl1-mesa-dri libglx-mesa0 \

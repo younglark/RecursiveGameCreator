@@ -25,14 +25,31 @@ $env:UV_PROJECT_ENVIRONMENT = Join-Path $Root ".venv"
 & uv sync --python 3.12 --extra test --locked
 if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed." }
 
+function ImageId($Image) {
+    $json = & wslc image inspect $Image -f json 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $json.Trim()) { return "" }
+    try { return (@($json | ConvertFrom-Json) | Select-Object -First 1).Id } catch { return "" }
+}
+
+function BuildImage($Name, $Arguments) {
+    $before = ImageId $Name
+    & wslc @Arguments
+    $code = $LASTEXITCODE
+    $after = ImageId $Name
+    if ($after -and $after -ne $before) {
+        # wslc returns 1 when a build logs warnings even after exporting the image.
+        if ($code -ne 0) { Write-Host "wslc build returned $code, but $Name was rebuilt; continuing." }
+        return
+    }
+    if ($code -ne 0) { Fail "$Name build failed." }
+}
+
 Write-Host ""
 Write-Host "==> Building the game runtime with wslc"
-& wslc build -f docker/runtime.Dockerfile -t rsi-gamecreator/runtime:full-v1 docker
-if ($LASTEXITCODE -ne 0) { Fail "Runtime image build failed." }
+BuildImage "rsi-gamecreator/runtime:full-v1" @("build", "-f", "docker/runtime.Dockerfile", "-t", "rsi-gamecreator/runtime:full-v1", "docker")
 Write-Host ""
 Write-Host "==> Building the role image with wslc"
-& wslc build -t game-agent-lite/codex:0.153.4-godot-v1 docker
-if ($LASTEXITCODE -ne 0) { Fail "Role image build failed." }
+BuildImage "game-agent-lite/codex:0.153.4-godot-v1" @("build", "-t", "game-agent-lite/codex:0.153.4-godot-v1", "docker")
 
 Write-Host ""
 Write-Host "==> Checking the isolated engine"

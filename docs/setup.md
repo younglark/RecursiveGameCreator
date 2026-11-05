@@ -64,7 +64,7 @@ docker build -t game-agent-lite/codex:0.153.4-godot-v1 docker
 
 | Image | Contents |
 | --- | --- |
-| `rsi-gamecreator/runtime:full-v1` | Python 3.12, Godot 4.7.1, Blender 4.3.2, Chromium/Playwright, FFmpeg, virtual display, software rendering, fonts |
+| `rsi-gamecreator/runtime:full-v1` | Python 3.12, Godot 4.7.2, Blender 4.3.2, Chromium/Playwright, FFmpeg, virtual display, software rendering, fonts |
 | `game-agent-lite/codex:0.153.4-godot-v1` | Codex CLI 0.153.4, Node 22, Python, browser self-test tools, matching Godot, FFmpeg and virtual display |
 
 These tags refer to **locally built images**, not an assumed public image registry. The first build downloads dependencies and can take time; subsequent runs reuse the images. Build contexts and versions are recorded in the Dockerfiles. Runtime containers remain isolated per execution.
