@@ -50,7 +50,7 @@ class CommandRunner:
         log.parent.mkdir(parents=True, exist_ok=True)
         process = popen([str(a) for a in argv], cwd=cwd, env=env or child_env(),
                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT, text=True, errors="replace")
+                        stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         lines: queue.Queue = queue.Queue(maxsize=256)
         finished = threading.Event()
 
@@ -69,7 +69,7 @@ class CommandRunner:
         reader = threading.Thread(target=pump, daemon=True)
         reader.start()
         try:
-            with log.open("w") as stream:
+            with log.open("w", encoding="utf-8", errors="replace") as stream:
                 while process.poll() is None or reader.is_alive() or not lines.empty():
                     tick()
                     if process.poll() is not None:
@@ -201,7 +201,7 @@ class Agent:
         atomic_json(job / "request.json", {"role": role, "model": self.config["model"],
                                           "prompt": prompt, "usage": None})
         prompt_path = job / "prompt.txt"
-        prompt_path.write_text(prompt)
+        prompt_path.write_text(prompt, encoding="utf-8")
         seen = {}
 
         def on_line(line):
@@ -320,7 +320,7 @@ class Agent:
         # JSON is valid YAML; label only this role's main container for stop/crash cleanup.
         atomic_json(task / "environment" / "docker-compose.yaml", {
             "services": {"main": {"pull_policy": "never", "labels": {"game-agent-lite.job": owner}}}})
-        (task / "instruction.md").write_text(prompt)
+        (task / "instruction.md").write_text(prompt, encoding="utf-8")
         (task / "task.toml").write_text(
             'schema_version = "1.4"\n[task]\nname = "local/game-agent-lite-role"\n'
             'version = "0.1.0"\n[agent]\nuser = "runner"\n'

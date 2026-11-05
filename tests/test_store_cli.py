@@ -201,7 +201,10 @@ def test_empty_cli_prompt_rejected_before_run_creation(tmp_path, prompt):
 def test_command_redacts_stream_and_cancels_process(tmp_path):
     log = tmp_path / "process.log"
     CommandRunner().run([sys.executable, "-c", "print('Authorization: Bearer abc123')"], tmp_path, log)
-    assert "abc123" not in log.read_text()
+    assert "abc123" not in log.read_text(encoding="utf-8")
+    wide = tmp_path / "wide.log"
+    CommandRunner().run([sys.executable, "-c", "import sys; sys.stdout.buffer.write('🙂\\n'.encode())"], tmp_path, wide)
+    assert "🙂" in wide.read_text(encoding="utf-8")
     calls = 0
     def stop():
         nonlocal calls
