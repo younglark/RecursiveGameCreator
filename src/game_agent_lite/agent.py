@@ -11,9 +11,20 @@ import tempfile
 
 from .store import atomic_json, file_paths, read_json, redact
 from .types import role_schema, validate
-from .usage import capture, shape_grok_usage
+from .usage import capture
 
 PACKAGE = Path(__file__).parent
+
+
+def _result_event(line):
+    """Last raw Grok CLI result. Invalid lines are not events."""
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    if isinstance(event, dict) and event.get("type") == "result":
+        return event
+    return None
 
 
 def child_env() -> dict[str, str]:
@@ -44,8 +55,13 @@ def terminate(process):
 
 
 class CommandRunner:
-    def run(self, argv: list[str], cwd: Path, log: Path, *, env=None, tick=lambda: None):
-        """Stream redacted output without buffering a whole rollout in memory."""
+    def run(self, argv: list[str], cwd: Path, log: Path, *, env=None, tick=lambda: None,
+            on_line=None):
+        """Stream redacted output without buffering a whole rollout in memory.
+
+        on_line sees each raw stdout line. process.log is the redacted copy and
+        is not a parse source for role output.
+        """
         log.parent.mkdir(parents=True, exist_ok=True)
         process = subprocess.Popen([str(a) for a in argv], cwd=cwd, env=env or child_env(),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -75,10 +91,14 @@ class CommandRunner:
                     if process.poll() is not None:
                         terminate(process)
                     try:
-                        stream.write(redact(lines.get(timeout=.05)))
-                        stream.flush()
+                        line = lines.get(timeout=.05)
                     except queue.Empty:
                         pass
+                    else:
+                        if on_line is not None:
+                            on_line(line)
+                        stream.write(redact(line))
+                        stream.flush()
             if process.returncode:
                 raise RuntimeError(f"{Path(str(argv[0])).name} exited with {process.returncode}; see {log.name}")
         finally:
@@ -133,50 +153,41 @@ class Agent:
         if project is not None:
             prompt += f"Game source workspace: {project_path}.\n"
         if self.config["backend"] == "grok":
-            prompt += ("Write files with tools. The final answer is only the JSON object "
-                       "matching the schema.\n")
-        atomic_json(job / "request.json", {"role": role, "model": self.config["model"],
-                                          "prompt": prompt, "usage": None})
-        reported = None
-        if remote:
-            argv, env = self.harbor_command(job, prompt, project, role)
-            try:
-                self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
-            finally:
-                self.cleanup_harbor(job / "harbor-owner.json")
-            self.check_harbor(job / "jobs")
-        elif self.config["backend"] == "grok":
-            prompt_path = job / "prompt.txt"
-            prompt_path.write_text(prompt)
-            with tempfile.TemporaryDirectory(prefix="game-agent-grok-") as home:
-                argv, env = self.grok_command(Path(home), io, prompt_path, schema, role, project)
-                self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
-            reported = self.finish_grok(job)
+            self.run_grok(role, job, io, prompt, schema, tick)
         else:
-            argv = [self.config["codex"], "exec", "--json", "--ephemeral",
-                    "--skip-git-repo-check", "--model", self.config["model"],
-                    "-c", f'model_reasoning_effort="{self.config["reasoning"]}"',
-                    "--sandbox", "workspace-write", "--cd", str(io.resolve()),
-                    "--output-schema", str((io / "schema.json").resolve()),
-                    "--output-last-message", str((io / "result.json").resolve())]
-            if project is not None and role == "builder":
-                argv += ["--add-dir", str(project.resolve())]
-            argv += [prompt]
-            env = child_env()
-            auth = Path(self.config["auth_file"]).expanduser()
-            if not auth.is_file():
-                raise ValueError("Local Codex login file is missing; run codex login first")
-            # Use the selected saved login without importing arbitrary user MCPs or API keys.
-            with tempfile.TemporaryDirectory(prefix="game-agent-codex-") as home:
-                (Path(home) / "auth.json").symlink_to(auth.resolve())
-                env["CODEX_HOME"] = home
-                self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
+            atomic_json(job / "request.json", {"role": role, "model": self.config["model"],
+                                              "prompt": prompt, "usage": None})
+            if remote:
+                argv, env = self.harbor_command(job, prompt, project, role)
+                try:
+                    self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
+                finally:
+                    self.cleanup_harbor(job / "harbor-owner.json")
+                self.check_harbor(job / "jobs")
+            else:
+                argv = [self.config["codex"], "exec", "--json", "--ephemeral",
+                        "--skip-git-repo-check", "--model", self.config["model"],
+                        "-c", f'model_reasoning_effort="{self.config["reasoning"]}"',
+                        "--sandbox", "workspace-write", "--cd", str(io.resolve()),
+                        "--output-schema", str((io / "schema.json").resolve()),
+                        "--output-last-message", str((io / "result.json").resolve())]
+                if project is not None and role == "builder":
+                    argv += ["--add-dir", str(project.resolve())]
+                argv += [prompt]
+                env = child_env()
+                auth = Path(self.config["auth_file"]).expanduser()
+                if not auth.is_file():
+                    raise ValueError("Local Codex login file is missing; run codex login first")
+                # Use the selected saved login without importing arbitrary user MCPs or API keys.
+                with tempfile.TemporaryDirectory(prefix="game-agent-codex-") as home:
+                    (Path(home) / "auth.json").symlink_to(auth.resolve())
+                    env["CODEX_HOME"] = home
+                    self.runner.run(argv, io, job / "process.log", env=env, tick=tick)
         value = validate(read_json(io / "result.json"), schema)
         # Usage not reported by a backend stays unknown, never an invented zero.
+        # Grok stores the provider usage object here. The ledger remaps it.
         atomic_json(job / "result.json", {"role": role, "model": self.config["model"],
-                                         "result": value,
-                                         "usage": reported if self.config["backend"] == "grok"
-                                         else self.usage(job / "process.log")})
+                                         "result": value, "usage": self.provider_usage(job)})
         return value
 
     @staticmethod
@@ -192,12 +203,40 @@ class Agent:
                     pass
         return result
 
-    def grok_command(self, home: Path, io: Path, prompt_path: Path, schema: dict, _role: str,
-                     _project: Path | None):
+    def provider_usage(self, job: Path):
+        """Raw provider usage for the job receipt. Ledger shaping lives in usage.py."""
+        if self.config["backend"] == "grok":
+            event = read_json(job / "grok-result.json") if (job / "grok-result.json").is_file() else {}
+            usage = event.get("usage") if isinstance(event, dict) else None
+            return usage if isinstance(usage, dict) else None
+        return self.usage(job / "process.log")
+
+    def run_grok(self, role: str, job: Path, io: Path, prompt: str, schema: dict, tick):
+        """One headless Grok call. The role result comes from the raw result event."""
+        prompt += ("Write files with tools. The final answer is only the JSON object "
+                   "matching the schema.\n")
+        atomic_json(job / "request.json", {"role": role, "model": self.config["model"],
+                                          "prompt": prompt, "usage": None})
+        prompt_path = job / "prompt.txt"
+        prompt_path.write_text(prompt)
+        seen = {}
+
+        def on_line(line):
+            event = _result_event(line)
+            if event is not None:
+                seen["event"] = event
+
+        with tempfile.TemporaryDirectory(prefix="game-agent-grok-") as home:
+            argv, env = self.grok_command(Path(home), io, prompt_path, schema)
+            self.runner.run(argv, io, job / "process.log", env=env, tick=tick, on_line=on_line)
+        self.finish_grok(job, seen.get("event"))
+
+    def grok_command(self, home: Path, io: Path, prompt_path: Path, schema: dict):
         """One fresh headless Grok process. Its home holds only this call's login.
 
         `--sandbox off` avoids bubblewrap user namespaces on hosts that block them.
         """
+        home = home.resolve()
         env = child_env()
         env["GROK_HOME"] = str(home)
         env["GROK_MEMORY"] = "0"
@@ -216,29 +255,25 @@ class Agent:
                 "--cwd", str(io.resolve()), "-m", self.config["model"],
                 "--effort", self.config["reasoning"], "--sandbox", "off", "--yolo",
                 "--verbatim", "--no-plan", "--no-subagents", "--disable-web-search",
-                "--no-auto-update", "--leader-socket", str((home / "leader.sock").resolve()),
+                "--no-auto-update", "--leader-socket", str(home / "leader.sock"),
                 "--tools", "read_file,grep,list_dir,search_replace,write,run_terminal_cmd"]
         return argv, env
 
-    def finish_grok(self, job: Path):
-        """Host-owned result.json. A file the model wrote is not the role result."""
-        last = None
-        log = job / "process.log"
-        if log.is_file():
-            for line in log.read_text(errors="replace").splitlines():
-                try:
-                    event = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(event, dict) and event.get("type") == "result":
-                    last = event
-        structured = last.get("structured_output") if isinstance(last, dict) else None
+    def finish_grok(self, job: Path, event):
+        """Host-owned result.json. A file the model wrote is not the role result.
+
+        event is the last raw CLI result, captured before log redaction.
+        """
+        if isinstance(event, dict):
+            billing = {key: event[key] for key in (
+                "type", "usage", "usage_is_incomplete", "cost_is_partial", "total_cost_usd")
+                if key in event}
+            atomic_json(job / "grok-result.json", billing)
+        structured = event.get("structured_output") if isinstance(event, dict) else None
         if not isinstance(structured, dict):
             raise RuntimeError("Grok finished without structured output; see process.log")
-        atomic_json(job / "io" / "result.json", structured)
-        shaped = shape_grok_usage(last)
-        atomic_json(job / "grok-usage.json", shaped or {})
-        return shaped
+        # Keep the model object intact. process.log is redacted and is not this source.
+        atomic_json(job / "io" / "result.json", structured, private=True)
 
     def harbor_command(self, job: Path, prompt: str, project: Path | None, role: str):
         config = self.config

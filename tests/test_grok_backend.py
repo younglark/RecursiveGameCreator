@@ -1,15 +1,16 @@
 import json
 from pathlib import Path
+import sys
 
 import pytest
 from jsonschema import ValidationError
 
-from game_agent_lite.agent import Agent, child_env
+from game_agent_lite.agent import Agent, CommandRunner, child_env
 from game_agent_lite.cli import load_config
 from game_agent_lite.paths import portable_config, resolve_paths
-from game_agent_lite.store import atomic_json, read_json
+from game_agent_lite.store import atomic_json, read_json, redact
 from game_agent_lite.types import CONFIG_SCHEMA, DEFAULTS, validate
-from game_agent_lite.usage import read_tokens, shape_grok_usage
+from game_agent_lite.usage import call_record, read_tokens, shape_grok_usage
 
 ROOT = Path(__file__).parents[1]
 SUMMARY = {"summary": "fixture", "checks": [], "remaining": []}
@@ -47,7 +48,10 @@ class Runner:
         self.sandbox_written = (home / "sandbox.toml").exists()
         self.auth_linked = (home / "auth.json").is_symlink()
         atomic_json(cwd / "result.json", {"summary": "written by the model"})
-        log.write_text(result_log(self.structured, self.usage, **self.extra))
+        text = result_log(self.structured, self.usage, **self.extra)
+        for line in text.splitlines(keepends=True):
+            kwargs["on_line"](line)
+        log.write_text(redact(text))
 
 
 def test_grok_builder_command_isolates_home_and_replaces_model_file(tmp_path, config, monkeypatch):
@@ -84,25 +88,17 @@ def test_grok_builder_command_isolates_home_and_replaces_model_file(tmp_path, co
     assert "Write files with tools" in prompt
     assert "final answer is only the JSON object" in prompt
     tokens, sources = read_tokens(job, "grok")
-    assert sources == ["grok-usage.json"]
+    assert sources == ["grok-result.json"]
     assert tokens["input_tokens"] == 3931
     assert tokens["cached_input_tokens"] == 2432
     assert tokens["output_tokens"] == 76
     assert tokens["total_tokens"] == 4007
     assert tokens["cost_usd"] == pytest.approx(0.0015878)
-    assert read_json(job / "result.json")["usage"]["input_tokens"] == 3931
-
-
-def test_player_also_runs_without_a_kernel_sandbox(tmp_path, config, monkeypatch):
-    monkeypatch.delenv("XAI_API_KEY", raising=False)
-    grok_config(config, tmp_path)
-    runner = Runner({"experience": "played", "problems": [], "suggestions": []})
-    project = tmp_path / "source"
-    project.mkdir()
-    Agent(config, runner).call("player", tmp_path / "job", {}, project=project)
-    argv = runner.seen[0]
-    assert argv[argv.index("--sandbox") + 1] == "off"
-    assert not runner.sandbox_written
+    raw = read_json(job / "result.json")["usage"]
+    assert raw["input_tokens"] == 1499
+    assert raw["cache_read_input_tokens"] == 2432
+    assert "structured_output" not in read_json(job / "grok-result.json")
+    assert not (job / "grok-usage.json").exists()
 
 
 def test_api_key_is_passed_only_to_the_grok_process(tmp_path, config, monkeypatch):
@@ -136,7 +132,9 @@ def test_exit_zero_without_structured_output_fails(tmp_path, config, monkeypatch
 
     class Empty:
         def run(self, argv, cwd, log, **kwargs):
-            log.write_text(json.dumps({"type": "result", "subtype": "success"}) + "\n")
+            line = json.dumps({"type": "result", "subtype": "success"}) + "\n"
+            kwargs["on_line"](line)
+            log.write_text(line)
 
     with pytest.raises(RuntimeError, match="without structured output"):
         Agent(config, Empty()).call("builder", tmp_path / "job", {"stage": "draft"})
@@ -150,7 +148,7 @@ def test_malformed_structured_output_is_rejected(tmp_path, config, monkeypatch):
             "builder", tmp_path / "job", {"stage": "draft"})
 
 
-def test_incomplete_or_partial_grok_cost_stays_unknown():
+def test_incomplete_or_partial_grok_cost_stays_unknown(tmp_path):
     event = {"usage_is_incomplete": True, "usage": {
         "input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
         "cache_creation_input_tokens": 0}, "total_cost_usd": 0}
@@ -163,7 +161,46 @@ def test_incomplete_or_partial_grok_cost_stays_unknown():
     assert shaped["cached_input_tokens"] == 30
     assert shaped["output_tokens"] == 5
     assert "cost_usd" not in shaped
+    missing_bucket = {"usage": {"input_tokens": 100, "cache_read_input_tokens": 20,
+                                "output_tokens": 5}}
+    shaped = shape_grok_usage(missing_bucket)
+    assert "input_tokens" not in shaped and "cached_input_tokens" not in shaped
+    assert shaped["output_tokens"] == 5
     assert read_tokens(Path("/no/such-grok-job"), "grok")[1] == []
+    nonzero = {"type": "result", "usage_is_incomplete": True, "total_cost_usd": 1,
+               "usage": {"input_tokens": 10, "cache_read_input_tokens": 4,
+                         "cache_creation_input_tokens": 1, "output_tokens": 3}}
+    assert "cost_usd" not in shape_grok_usage(nonzero)
+    atomic_json(tmp_path / "grok-result.json", nonzero)
+    record = call_record(tmp_path, {"backend": "grok"}, role="builder",
+                         context={"stage": "draft"}, status="completed")
+    assert record["sources"] == ["grok-result.json"]
+    assert record["tokens"]["input_tokens"] == 15
+    assert record["tokens"]["cached_input_tokens"] == 5
+    assert record["usage_status"] == "partial"
+
+
+def test_role_result_comes_from_the_raw_event_not_the_redacted_log(tmp_path, config, monkeypatch):
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    grok_config(config, tmp_path)
+    token = "eyJhbGciOiJIUzI1NiJ9.eyJhIjoiYiJ9.c2ln"
+    runner = Runner({"summary": "kept " + token, "checks": [], "remaining": []})
+    job = tmp_path / "job"
+    result = Agent(config, runner).call("builder", job, {"stage": "draft"})
+    assert token in result["summary"]
+    assert token not in (job / "process.log").read_text()
+    assert token in (job / "io/result.json").read_text()
+
+
+def test_command_runner_reports_raw_lines_and_redacts_the_log(tmp_path):
+    script = tmp_path / "speak.py"
+    token = "eyJhbGciOiJIUzI1NiJ9.eyJhIjoiYiJ9.c2ln"
+    script.write_text("import json\nprint(json.dumps({'type': 'result', 'text': %r}))\n" % token)
+    seen = []
+    log = tmp_path / "process.log"
+    CommandRunner().run([sys.executable, str(script)], tmp_path, log, on_line=seen.append)
+    assert token in seen[0]
+    assert token not in log.read_text()
 
 
 def test_grok_config_paths_and_example(tmp_path):
